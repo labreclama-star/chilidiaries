@@ -1,0 +1,87 @@
+# Keep-alive для Supabase (бесплатный тариф).
+#
+# ЗАЧЕМ: Free-проект Supabase ставится на паузу после 7 дней без активности,
+# а первый запрос после паузы (после ручного восстановления) идёт 10–30 секунд.
+# Этот workflow раз в 3 дня делает лёгкий GET в REST API (одна строка из
+# profiles) — БД видит активность, и проект не засыпает.
+#
+# КУДА ПОЛОЖИТЬ: .github/workflows/keep-alive.yml (в корне репозитория).
+# Workflow работает только из ветки по умолчанию (main/master).
+#
+# ЧТО НУЖНО СДЕЛАТЬ ПОЛЬЗОВАТЕЛЮ (один раз):
+#   GitHub → репозиторий → Settings → Secrets and variables → Actions →
+#   New repository secret — добавить ДВА секрета:
+#     SUPABASE_URL       — https://<project-ref>.supabase.co  (без слэша в конце
+#                          и без /rest/v1)
+#     SUPABASE_ANON_KEY  — anon / publishable ключ проекта
+#                          (Supabase → Project Settings → API). Именно anon,
+#                          НЕ service_role: этот ключ нельзя хранить в таких местах.
+#
+# ПРОВЕРКА: GitHub → Actions → «Supabase keep-alive» → Run workflow (это
+# workflow_dispatch). Зелёная галочка и «HTTP 200» в логе — всё работает.
+# Ключ в логах не печатается.
+#
+# ОГРАНИЧЕНИЯ, о которых стоит знать:
+#  • Пинг ПРЕДОТВРАЩАЕТ паузу, но не снимает её: если проект уже на паузе,
+#    его нужно восстановить вручную в дашборде Supabase (кнопка Restore).
+#  • В ПУБЛИЧНЫХ репозиториях GitHub автоматически отключает scheduled-
+#    workflow, если 60 дней не было активности в репозитории (коммитов и т.п.).
+#    Придёт письмо; включить обратно — Actions → workflow → Enable. Любой
+#    коммит тоже сбрасывает этот счётчик.
+#  • Расписание в GitHub Actions неточное: запуск может сдвинуться на
+#    несколько–десятки минут. Для интервала в 3 дня (при лимите 7) это не важно.
+#  • */3 в поле «день месяца» считается внутри месяца (1, 4, 7 … 31, затем снова 1),
+#    поэтому на стыке месяцев интервал бывает короче 3 дней — это безопасно.
+#
+# АЛЬТЕРНАТИВЫ, если GitHub Actions не подходит:
+#  • cron-job.org — бесплатный внешний cron: создать задачу с GET на
+#    <SUPABASE_URL>/rest/v1/profiles?select=id&limit=1 и заголовком
+#    apikey: <anon-ключ>, расписание раз в 1–3 дня.
+#  • UptimeRobot (бесплатный тариф) — HTTP-монитор на тот же URL. Проверь,
+#    что на твоём тарифе можно задать заголовок apikey; если нет, этот вариант
+#    не подойдёт (без ключа REST вернёт 401 — а до БД запрос может и не дойти).
+
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '0 3 */3 * *'   # каждые 3 дня в 03:00 UTC
+  workflow_dispatch:         # ручной запуск из вкладки Actions
+
+# Репозиторий этому job'у не нужен — минимальные права.
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Не заданы секреты SUPABASE_URL и/или SUPABASE_ANON_KEY (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+          BASE="${SUPABASE_URL%/}"
+
+          # --retry-all-errors: на случай, если проект просыпается/сеть моргнула.
+          status=$(curl --silent --show-error \
+            --max-time 60 --retry 3 --retry-delay 20 --retry-all-errors \
+            --output /tmp/response.json --write-out '%{http_code}' \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            "${BASE}/rest/v1/profiles?select=id&limit=1")
+
+          echo "HTTP ${status}"
+
+          if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+            echo "::error::Supabase ответил HTTP ${status}"
+            cat /tmp/response.json
+            echo
+            exit 1
+          fi

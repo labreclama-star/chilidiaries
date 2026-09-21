@@ -1,0 +1,20 @@
+# Зависимости
+node_modules/
+
+# Сборка
+dist/
+build/
+
+# Переменные окружения — НИКОГДА не коммитим реальные ключи Supabase
+.env
+.env.local
+.env.*.local
+
+# Кэш скрипта-мигратора (Этап 6) — содержит сопоставление мок-id ↔ auth.users.id,
+# специфично для конкретного Supabase-проекта, в репозиторий не кладём.
+scripts/.migration-id-map.json
+
+# IDE / OS
+.vscode/
+.DS_Store
+*.log

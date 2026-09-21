@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<title>ChiliDiaries — дневники выращивания острого перца</title>
+<meta name="description" content="ChiliDiaries — сообщество гроверов острого перца: пошаговые дневники выращивания от рассады до урожая, каталог сортов с замерами SHU, рецепты соусов и приправ, обучающий блог." />
+<meta name="theme-color" content="#150F0B" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="ChiliDiaries — дневники выращивания острого перца" />
+<meta property="og:description" content="Веди дневник выращивания острого перца, сравнивай сорта по остроте (SHU), делись рецептами и читай блог сообщества." />
+<meta property="og:image" content="/favicon.svg" />
+<meta name="twitter:card" content="summary" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<!-- Hero главной — CSS-фон, который React выставляет только после загрузки JS, поэтому
+     браузер узнаёт о нём поздно. Preload заставляет начать качать файл сразу при разборе HTML.
+     Путь должен совпадать с PHOTOS.hero в src/data/photos.js. Если админ задал свой
+     settings.heroPhoto, этот файл не понадобится (в консоли будет предупреждение о неиспользованном preload). -->
+<link rel="preload" as="image" href="/hero.webp" type="image/webp" fetchpriority="high">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
