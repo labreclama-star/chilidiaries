@@ -10,8 +10,16 @@ function TrophyIcon() {
 }
 
 export default function ContestCard({ contest }) {
-  const { joinContest, joinedContestIds, openModal } = useApp();
+  const { startJoinContest, joinedContestIds, openModal, growers, contestWins } = useApp();
   const joined = joinedContestIds.includes(contest.id);
+  const finished = contest.status === 'finished';
+
+  // Официальный победитель (Этап 6, задача Б1) — только для finished-
+  // конкурсов и только если гровер реально резолвится по id (если запись
+  // в contestWins ссылается на удалённого гровера — рассинхрон данных,
+  // молча не рендерим, а не показываем "undefined").
+  const win = finished ? contestWins.find((w) => w.contestId === contest.id) : null;
+  const winnerGrower = win ? growers.find((g) => g.id === win.winnerUserId) : null;
 
   return (
     <div className="contest-card">
@@ -32,6 +40,11 @@ export default function ContestCard({ contest }) {
           {contest.title}
         </button>
       </h3>
+      {winnerGrower && (
+        <div style={{ marginBottom: 10 }}>
+          <span className="tag ember">🥇 Победитель: {winnerGrower.name}</span>
+        </div>
+      )}
       <p>{contest.desc}</p>
       <div className="contest-prize"><TrophyIcon /><span>{contest.prize}</span></div>
       <div className="contest-progress">
@@ -43,8 +56,8 @@ export default function ContestCard({ contest }) {
       </div>
       <div style={{ display: 'flex', gap: 10 }}>
         <button className="btn btn-outline" onClick={() => openModal('contestDetail', { contestId: contest.id })}>Подробнее</button>
-        <button className="btn btn-primary btn-block" disabled={joined} onClick={() => joinContest(contest.id)}>
-          {joined ? '✓ Вы участвуете' : 'Участвовать'}
+        <button className="btn btn-primary btn-block" disabled={joined || finished} onClick={() => startJoinContest(contest.id)}>
+          {joined ? '✓ Вы участвуете' : finished ? 'Конкурс завершён' : 'Участвовать'}
         </button>
       </div>
     </div>

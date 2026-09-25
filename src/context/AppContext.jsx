@@ -23,7 +23,16 @@ import {
   fetchMyReactions, LIKE_TYPES
 } from '../services/reactionsService.js';
 import { fetchInitialPosts, createPostFromForm, insertBlogPost, incrementBlogViewsRpc } from '../services/blogService.js';
-import { fetchInitialContests, createContestFromForm, insertContestParticipant } from '../services/contestService.js';
+import {
+  fetchInitialContests, insertContest as insertContestRequest, insertContestParticipant,
+  joinContestWithDiary as joinContestWithDiaryRequest,
+  getContestParticipants as getContestParticipantsRequest,
+  declareContestWinner as declareContestWinnerRequest,
+  getContestWinners as getContestWinnersRequest,
+  updateContest as updateContestRequest,
+  fetchAllContestWinners as fetchAllContestWinnersRequest,
+  removeContestParticipant as removeContestParticipantRequest
+} from '../services/contestService.js';
 import { fetchInitialQuestions, createAnswer, insertQuestion, insertAnswer, updateQuestionStatus } from '../services/questionService.js';
 import { fetchInitialLights, createLightFromForm } from '../services/lightService.js';
 import { fetchInitialNutrients, createNutrientFromForm } from '../services/nutrientService.js';
@@ -104,6 +113,7 @@ export function AppProvider({ children }) {
   const [savedRecipeIds, setSavedRecipeIds] = useState([]);
   const [seedBank, setSeedBank] = useState([]);
   const [varietyVotes, setVarietyVotes] = useState([]); // { varietyId, userId, overall, capsaicin, aroma, ts }
+  const [contestWins, setContestWins] = useState([]); // { contestId, contestTitle, winnerUserId, winnerDiaryId, place, announcedAt } — Этап 6
 
   // ---- modal orchestration (mirrors the old single-overlay-per-id pattern) ----
   const [activeModal, setActiveModal] = useState(null); // e.g. 'auth' | 'wizard' | 'addVariety' | 'addRecipe' | 'writeArticle' | 'moreSheet'
@@ -160,7 +170,7 @@ export function AppProvider({ children }) {
         return;
       }
       const g = growersRes.data;
-      const [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes, votesRes] = await Promise.all([
+      const [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes, votesRes, winsRes] = await Promise.all([
         fetchInitialVarieties(),
         fetchInitialDiaries(g),
         fetchInitialRecipes(),
@@ -173,7 +183,11 @@ export function AppProvider({ children }) {
         // считает агрегат для карточек сортов, в т.ч. у гостей. votesRes НЕ
         // входит в firstError ниже — без голосов каталог живёт на стартовых
         // рейтингах сортов, это не повод показывать экран ошибки.
-        fetchAllVarietyVotes()
+        fetchAllVarietyVotes(),
+        // Победы в конкурсах (Этап 6) — для бейджа "🏅 Победитель конкурса" в
+        // AchievementBadges. Та же логика, что у votesRes: без побед бейдж
+        // просто не загорится ни у кого, это не повод рушить всё приложение.
+        fetchAllContestWinnersRequest()
       ]);
       const firstError = [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes].find((r) => r.error)?.error;
       if (firstError) {
@@ -194,6 +208,11 @@ export function AppProvider({ children }) {
         console.warn('[varietyVotes] Не удалось загрузить голоса за сорта:', votesRes.error.message);
       } else {
         setVarietyVotes(votesRes.data);
+      }
+      if (winsRes.error) {
+        console.warn('[contestWins] Не удалось загрузить победы в конкурсах:', winsRes.error.message);
+      } else {
+        setContestWins(winsRes.data);
       }
       setLoading(false);
     })();
@@ -453,7 +472,7 @@ export function AppProvider({ children }) {
     // Сид-админ логинится в фиксированного гровера id:'admin' (см. data/growers.js) —
     // мимо Supabase/profiles полностью, как и раньше.
     if (user.isAdminLogin) {
-      const g = growers.find((x) => x.id === 'admin');
+      const g = growers.find((x) => x.role === 'admin');
       if (!g) {
         showToast('Не удалось войти');
         return null;
@@ -1178,6 +1197,121 @@ export function AppProvider({ children }) {
       pendingReactionsRef.current.delete(key);
     }
   }, [currentUser, joinedContestIds, showToast, openModal]);
+  // ^ LEGACY: старая логика участия без привязки дневника (Этап 5, INSERT без
+  // diary_id/likes_at_start). Оставлена нетронутой — вдруг где-то за пределами
+  // присланных файлов есть ссылка на joinContest/joinedContestIds напрямую.
+  // Новый путь участия (Этап 3 конкурсной механики) — startJoinContest ниже,
+  // который открывает ContestJoinModal, а тот зовёт joinContestWithDiary.
+
+  /**
+   * startJoinContest(contestId) — единая точка входа для кнопки "Участвовать"
+   * и на карточке (ContestCard), и в детальной модалке (ContestDetailModal).
+   * Решает, что показать, ДО открытия модалки выбора дневника:
+   *  - не залогинен → openModal('auth');
+   *  - конкурс завершён → тост (кнопка в UI и так должна быть disabled —
+   *    это дублирующая защита на случай прямого вызова);
+   *  - уже участвует → ничего не делаем (кнопка в UI disabled={joined});
+   *  - нет своих дневников → тост "заведи дневник";
+   *  - иначе → openModal('contestJoin', { contestId }).
+   *
+   * diaries в state УЖЕ отфильтрованы по is_private=false на уровне запроса
+   * (см. fetchInitialDiaries) — свои приватные дневники сюда просто не
+   * попадают, поэтому фильтр по growerId ниже достаточен и не нужно отдельно
+   * проверять приватность.
+   */
+  const startJoinContest = useCallback((contestId) => {
+    if (!currentUser) {
+      showToast('Войди, чтобы участвовать в конкурсе');
+      openModal('auth');
+      return;
+    }
+    const contest = contests.find((c) => c.id === contestId);
+    if (!contest) return;
+    if (contest.status === 'finished') {
+      showToast('Конкурс завершён — участие закрыто');
+      return;
+    }
+    if (joinedContestIds.includes(contestId)) return;
+
+    const myDiaries = diaries.filter((d) => d.growerId === currentUser.growerId);
+    if (myDiaries.length === 0) {
+      showToast('Заведи дневник, чтобы участвовать в конкурсе');
+      return;
+    }
+    openModal('contestJoin', { contestId });
+  }, [currentUser, contests, joinedContestIds, diaries, showToast, openModal]);
+
+  /**
+   * joinContestWithDiary(contestId, diaryId) — вызывается из ContestJoinModal
+   * после выбора дневника юзером. БЕЗ оптимизма (в отличие от legacy
+   * joinContest выше): причин отказа теперь содержательно больше (чужой
+   * дневник, приватный дневник, дубликат — всё проверяется в сервисе/БД),
+   * поэтому ждём ответ и меняем state только по факту, а не откатываем
+   * красивую "участвуешь" анимацию секунду спустя.
+   *
+   * Возвращает { ok, duplicate } — ContestJoinModal закрывает себя только
+   * при ok:true (и на duplicate тоже — юзер и так уже участвует).
+   */
+  const joinContestWithDiary = useCallback(async (contestId, diaryId) => {
+    if (!currentUser) return { ok: false };
+    const key = `join:${contestId}`;
+    if (pendingReactionsRef.current.has(key)) return { ok: false };
+    pendingReactionsRef.current.add(key);
+    try {
+      const { data, error } = await joinContestWithDiaryRequest({ contestId, userId: currentUser.growerId, diaryId });
+      if (error) {
+        showToast(error.message || 'Не удалось присоединиться к конкурсу');
+        return { ok: false };
+      }
+      setJoinedContestIds((prev) => (prev.includes(contestId) ? prev : [...prev, contestId]));
+      if (data?.duplicate) {
+        showToast('Ты уже участвуешь в конкурсе');
+        return { ok: true, duplicate: true };
+      }
+      setContests((prev) => prev.map((c) => (c.id === contestId ? { ...c, participants: c.participants + 1 } : c)));
+      showToast('Ты участвуешь в конкурсе!', 'success');
+      return { ok: true, duplicate: false };
+    } finally {
+      pendingReactionsRef.current.delete(key);
+    }
+  }, [currentUser, showToast]);
+
+  /**
+   * getContestParticipants(contestId) — тонкий прокси на сервис, БЕЗ стейта
+   * в контексте (в отличие от joinContestWithDiary выше). Список участников
+   * нужен ровно в одном месте (ContestDetailModal, Этап 4) и живёт там
+   * локальным useState — тащить его в глобальный контекст нет смысла, а вот
+   * прямой импорт contestService.js из компонента нарушил бы принятый в
+   * проекте паттерн "компоненты ходят только через useApp()".
+   */
+  const getContestParticipants = useCallback(async (contestId) => {
+    const { data, error } = await getContestParticipantsRequest(contestId);
+    return { data, error };
+  }, []);
+
+  /**
+   * declareContestWinner({ contestId, winnerUserId, winnerDiaryId, place }) —
+   * тонкий прокси на сервис (Этап 5, п.3), вызывается из
+   * AdminContestWinnerModal.jsx. RLS сама отсечёт не-админа — здесь просто
+   * прокидываем { data, error } дальше, без стейта: победитель попадает в
+   * стейт AdminContests через её собственный setWinners после успеха, а не
+   * через контекст (тот же принцип, что у getContestParticipants — стейт
+   * живёт там, где он реально нужен).
+   */
+  const declareContestWinner = useCallback(async ({ contestId, winnerUserId, winnerDiaryId, place }) => {
+    const { data, error } = await declareContestWinnerRequest({ contestId, winnerUserId, winnerDiaryId, place });
+    return { data, error };
+  }, []);
+
+  /**
+   * getContestWinners(contestIds) — прокси на bulk-чтение contest_winners
+   * (Этап 5, п.4) для админ-грида — какие конкурсы уже имеют объявленного
+   * победителя.
+   */
+  const getContestWinners = useCallback(async (contestIds) => {
+    const { data, error } = await getContestWinnersRequest(contestIds);
+    return { data, error };
+  }, []);
 
   // ---- Q&A ("Вопросы") ----
   const addQuestion = useCallback(async (formData) => {
@@ -1430,20 +1564,69 @@ export function AppProvider({ children }) {
   }, [showToast]);
 
   // ---- конкурсы ----
+  /**
+   * adminAddContest(formData) — фото теперь реально грузится в Storage
+   * внутри insertContest (Задача 1), а не отбрасывается. "Фото не
+   * загрузилось" определяем ТАК ЖЕ, как в addVariety выше: сравниваем
+   * formData.photo (что прислали) и c.photo (что вернулось из БД) — если
+   * прислали что-то, а вернулся falsy — значит, insertContest/photoUrlForDb
+   * тихо проглотили ошибку загрузки. Отдельного флага photoSkipped сервис
+   * не возвращает (в проекте для этого нет прецедента, кроме этого паттерна
+   * сравнения — addVariety делает именно так, не через флаг).
+   */
   const adminAddContest = useCallback(async (formData) => {
-    const { data: c, error } = await createContestFromForm(formData);
+    const { data: c, error } = await insertContestRequest(formData);
     if (error) {
       showToast(error.message || 'Не удалось создать конкурс');
       return null;
     }
     setContests((prev) => [c, ...prev]);
-    showToast(`Конкурс «${c.title}» создан`, 'success');
+    const photoDropped = !!formData.photo && !c.photo;
+    showToast(
+      photoDropped
+        ? `Конкурс «${c.title}» создан, но фото не загрузилось — попробуй файл поменьше`
+        : `Конкурс «${c.title}» создан`,
+      'success'
+    );
     return c;
   }, [showToast]);
 
-  const adminUpdateContest = useCallback((id, patch) => {
-    setContests((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-    showToast('Конкурс обновлён', 'success');
+  /**
+   * adminUpdateContest(id, patch) — раньше это была пустышка: только
+   * setContests(...), без обращения к Supabase. Правки жили только в
+   * памяти React и пропадали после Cmd+R. Теперь сначала пишем в БД через
+   * updateContest, и только на успехе меняем локальный state — если БД
+   * отказала (например, CHECK-constraint на status), юзер увидит ошибку
+   * тостом, а не "успех", который на самом деле не сохранился.
+   *
+   * silent (Этап 6, задача А) — когда true, не показывает тост "Конкурс
+   * обновлён" на успехе. Нужно для автоперевода статуса в 'finished' из
+   * AdminContestWinnerModal.jsx: там уже есть свой тост "Победитель
+   * объявлен!", и накладывать на него второй тост про статус — лишний шум.
+   * Обычные вызовы (форма "Изменить" в AdminContests.jsx) silent не передают
+   * и продолжают вести себя как раньше.
+   *
+   * Задача 1: локальный merge теперь берёт c.photo (реальный URL из БД
+   * после updateContest), а НЕ patch.photo — если в patch был base64
+   * (новый выбранный файл), в state попал бы base64 вместо настоящего
+   * URL, и карточка временно расходилась бы с БД до следующего Cmd+R.
+   * "Фото не загрузилось" — то же сравнение вход/выход, что в adminAddContest.
+   */
+  const adminUpdateContest = useCallback(async (id, patch, silent = false) => {
+    const { data: c, error } = await updateContestRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить конкурс');
+      return { ok: false };
+    }
+    setContests((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: c ? c.photo : x.photo } : x)));
+    if (!silent) {
+      const photoDropped = patch.photo !== undefined && !!patch.photo && c && !c.photo;
+      showToast(
+        photoDropped ? 'Конкурс обновлён, но фото не загрузилось — попробуй файл поменьше' : 'Конкурс обновлён',
+        'success'
+      );
+    }
+    return { ok: true };
   }, [showToast]);
 
   const adminDeleteContest = useCallback((id) => {
@@ -1451,23 +1634,49 @@ export function AppProvider({ children }) {
     showToast('Конкурс удалён', 'success');
   }, [showToast]);
 
-  const adminAddContestParticipant = useCallback((contestId, growerId) => {
-    setContests((prev) => prev.map((c) => {
-      if (c.id !== contestId) return c;
-      if (c.participantIds.includes(growerId)) return c;
-      const participantIds = [...c.participantIds, growerId];
-      return { ...c, participantIds, participants: participantIds.length };
-    }));
-    showToast('Участник добавлен', 'success');
+  /**
+   * adminAddContestParticipant(contestId, userId, diaryId) — Задача 2: раньше
+   * это был мок (только setContests, никакого INSERT). Теперь реальный
+   * INSERT в contest_participants через тот же сервисный
+   * joinContestWithDiaryRequest, что уже использует публичный
+   * joinContestWithDiary ниже — та же проверка "дневник свой и публичный"
+   * сработает и здесь: diary.grower_id должен совпадать с переданным
+   * userId (гровером, которого добавляет админ), а НЕ с самим админом.
+   *
+   * Сигнатура поменялась (раньше (contestId, growerId), теперь плюс
+   * diaryId) — по правилам схемы (миграция 0013): участие привязано к
+   * конкретному дневнику, "просто гровера" добавить нельзя.
+   *
+   * participants увеличиваем ПОСЛЕ подтверждения от БД, не оптимистично —
+   * и не увеличиваем вовсе, если пришёл duplicate (гровер уже участвовал).
+   */
+  const adminAddContestParticipant = useCallback(async (contestId, userId, diaryId) => {
+    const { data, error } = await joinContestWithDiaryRequest({ contestId, userId, diaryId });
+    if (error) {
+      showToast(error.message || 'Не удалось добавить участника');
+      return { ok: false };
+    }
+    if (!data?.duplicate) {
+      setContests((prev) => prev.map((c) => (c.id === contestId ? { ...c, participants: c.participants + 1 } : c)));
+    }
+    showToast(data?.duplicate ? 'Этот гровер уже участвует своим дневником' : 'Участник добавлен', 'success');
+    return { ok: true, duplicate: !!data?.duplicate };
   }, [showToast]);
 
-  const adminRemoveContestParticipant = useCallback((contestId, growerId) => {
-    setContests((prev) => prev.map((c) => {
-      if (c.id !== contestId) return c;
-      const participantIds = c.participantIds.filter((id) => id !== growerId);
-      return { ...c, participantIds, participants: participantIds.length };
-    }));
-    showToast('Участник удалён', 'success');
+  /**
+   * adminRemoveContestParticipant(contestId, userId) — Задача 2: раньше
+   * мок (только setContests). Теперь реальный DELETE через
+   * removeContestParticipant. participants уменьшаем только на успехе.
+   */
+  const adminRemoveContestParticipant = useCallback(async (contestId, userId) => {
+    const { error } = await removeContestParticipantRequest(contestId, userId);
+    if (error) {
+      showToast(error.message || 'Не удалось убрать участника');
+      return { ok: false };
+    }
+    setContests((prev) => prev.map((c) => (c.id === contestId ? { ...c, participants: Math.max(0, c.participants - 1) } : c)));
+    showToast('Участник убран', 'success');
+    return { ok: true };
   }, [showToast]);
 
   // ---- свет ----
@@ -1569,6 +1778,7 @@ export function AppProvider({ children }) {
     toggleFollowGrower,
     addVariety,
     varietyVotes, voteVariety,
+    contestWins,
     toggleLikeDiary, loadFullDiary, createDiary, addWeekReport, addComment, updateDiaryStage,
     subscribedDiaryIds, toggleDiarySubscription,
     notifications, markNotificationRead, markAllNotificationsRead,
@@ -1576,7 +1786,8 @@ export function AppProvider({ children }) {
     toggleLikeRecipe, incrementRecipeViews, toggleSaveRecipe, savedRecipeIds,
     seedBank, addSeed, removeSeed, toggleSeedStatus,
     addBlogPost, toggleLikeBlogPost, incrementBlogViews,
-    joinContest, joinedContestIds,
+    joinContest, joinedContestIds, startJoinContest, joinContestWithDiary, getContestParticipants,
+    declareContestWinner, getContestWinners,
     addQuestion, addAnswer, toggleLikeQuestion, markSolved,
 
     // ---- админ ----

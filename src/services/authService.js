@@ -23,14 +23,14 @@
 // профиля (profiles.name), который AppContext.jsx подтягивает через
 // getGrowerById после успешного signInWithPassword/signUp.
 
-import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
 import { uploadPhoto } from './_photo.js';
+import { ok, fail } from './_result.js';
 
 export const ADMIN_LOGIN = 'admin';
 const ADMIN_PASSWORD = 'ChiliAdmin2026';
 
-// Supabase отдаёt технические англоязычные сообщения — переводим самые
+// Supabase отдаёт технические англоязычные сообщения — переводим самые
 // частые на русский для UI; остальное показываем как есть (лучше, чем
 // молчание, но менее приятно, чем полный словарь всех кодов ошибок).
 function authErrorMessage(error) {
@@ -45,7 +45,6 @@ function authErrorMessage(error) {
 export async function login({ identifier, password }) {
   try {
     const raw = (identifier || '').trim();
-
     // Сид-админ — как и раньше, полностью мимо Supabase (см. комментарий выше).
     if (raw.toLowerCase() === ADMIN_LOGIN) {
       if (password !== ADMIN_PASSWORD) {

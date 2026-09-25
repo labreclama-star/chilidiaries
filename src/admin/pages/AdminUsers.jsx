@@ -31,8 +31,22 @@ export default function AdminUsers() {
     { key: 'diaries', label: 'Дневников' },
     { key: 'followers', label: 'Подписчиков' },
     { key: 'score', label: 'Рейтинг', render: (g) => growerScore(g, diaries) },
-    { key: 'role', label: 'Роль', render: (g) => (g.role === 'admin' ? <span className="tag ember">admin</span> : 'user') },
-    { key: 'status', label: 'Статус', render: (g) => (g.banned ? <span className="tag ember">Забанен</span> : (g.online ? 'Онлайн' : 'Оффлайн')) }
+    {
+      key: 'role', label: 'Роль', render: (g) => (
+        g.role === 'admin'
+          ? <span className="admin-pill admin-pill--accent">Админ</span>
+          : <span className="admin-pill admin-pill--muted">Гровер</span>
+      )
+    },
+    {
+      key: 'status', label: 'Статус', render: (g) => (
+        g.banned
+          ? <span className="admin-pill admin-pill--danger">Забанен</span>
+          : (g.online
+            ? <span style={{ color: 'var(--leaf)' }}><span className="admin-status-dot" />Онлайн</span>
+            : <span className="sub">Оффлайн</span>)
+      )
+    }
   ];
 
   return (

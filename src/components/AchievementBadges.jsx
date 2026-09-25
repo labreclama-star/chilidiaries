@@ -2,10 +2,11 @@ import { growerBadges, growerVarietyIdsGrown } from '../utils/helpers.js';
 import { useApp } from '../context/AppContext.jsx';
 
 export default function AchievementBadges({ grower, size, unlockedOnly, limit }) {
-  const { diaries } = useApp();
+  const { diaries, contestWins } = useApp();
   const varietiesGrownCount = growerVarietyIdsGrown(grower.id, diaries).size;
   const harvestedDiariesCount = diaries.filter((d) => d.growerId === grower.id && d.stage === 'Собран урожай').length;
-  let badges = growerBadges(grower, varietiesGrownCount, harvestedDiariesCount);
+  const contestWinsCount = contestWins.filter((w) => w.winnerUserId === grower.id).length;
+  let badges = growerBadges(grower, varietiesGrownCount, harvestedDiariesCount, contestWinsCount);
   if (unlockedOnly) badges = badges.filter((b) => b.unlocked);
   if (limit) badges = badges.slice(0, limit);
   const isSm = size === 'sm';

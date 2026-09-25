@@ -32,7 +32,7 @@ export function growerVarietiesGrown(growerId, diaries, varieties) {
   return [...ids].map((id) => varieties.find((v) => v.id === id)).filter(Boolean);
 }
 
-export function growerBadges(grower, varietiesGrownCount = 0, harvestedDiariesCount = 0) {
+export function growerBadges(grower, varietiesGrownCount = 0, harvestedDiariesCount = 0, contestWinsCount = 0) {
   return [
     { icon: '🌱', label: 'Первый гров', unlocked: grower.diaries >= 1 },
     { icon: '📓', label: '5 дневников', unlocked: grower.diaries >= 5 },
@@ -42,7 +42,11 @@ export function growerBadges(grower, varietiesGrownCount = 0, harvestedDiariesCo
     { icon: '🥉', label: '10 сортов выращено', unlocked: varietiesGrownCount >= 10 },
     { icon: '🥈', label: '20 сортов выращено', unlocked: varietiesGrownCount >= 20 },
     { icon: '🥇', label: '30 сортов выращено', unlocked: varietiesGrownCount >= 30 },
-    { icon: '🎖️', label: 'Закрытие сезона', unlocked: harvestedDiariesCount >= 1 }
+    { icon: '🎖️', label: 'Закрытие сезона', unlocked: harvestedDiariesCount >= 1 },
+    // Этап 6: победа в конкурсе (contest_winners.winner_user_id === grower.id).
+    // В конец массива, а не в середину — чтобы не сдвинуть порядок остальных
+    // бейджей в уже отрендеренных местах (профиль, карточки).
+    { icon: '🏅', label: 'Победитель конкурса', unlocked: contestWinsCount >= 1 }
   ];
 }
 

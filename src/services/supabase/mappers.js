@@ -539,6 +539,39 @@ export function diaryListRowToJs(row) {
  * @param {Record<string, any>} row
  * @returns {import('../../domain/types.js').Contest}
  */
+/**
+ * Строка contest_participants (JOIN на profiles!user_id и diaries!diary_id) ->
+ * объект строки таблицы результатов конкурса.
+ *
+ * likesNow читаем ЖИВЫМ из diaries.likes_count (не кэшируем на момент
+ * привязки — иначе таблица результатов никогда не менялась бы), а
+ * likesAtStart — снимок, сделанный один раз в joinContestWithDiary
+ * (contestService.js) в момент INSERT. likesDelta = likesNow - likesAtStart —
+ * собственно голоса за период конкурса (правило: лайки до старта не считаются).
+ *
+ * profile/diary могут прийти null (пока не должно — оба FK not null по
+ * задумке, но diary_id старых участников из Этапа 5, вступивших ДО этой
+ * миграции, — null): в этом случае отдаём пустые дефолты, а не бросаем
+ * ошибку на всю таблицу результатов.
+ *
+ * @param {Record<string, any>} row
+ */
+export function participantRowToJs(row) {
+  const likesNow = row.diary?.likes_count ?? 0;
+  const likesAtStart = row.likes_at_start ?? 0;
+  return {
+    userId: row.user_id,
+    name: row.profile?.name ?? 'Гровер',
+    avatar: row.profile?.avatar_url ?? null,
+    diaryId: row.diary_id ?? null,
+    diaryTitle: row.diary?.title ?? '',
+    likesAtStart,
+    likesNow,
+    likesDelta: likesNow - likesAtStart,
+    joinedAt: row.joined_at
+  };
+}
+
 export function contestRowToJs(row) {
   return {
     id: row.id,

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
-
+import MoreSheetModal from './components/MoreSheetModal.jsx';
+import ContestJoinModal from './components/ContestJoinModal.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Header from './components/Header.jsx';
 import Footer from './components/Footer.jsx';
@@ -16,7 +17,6 @@ import AddVarietyModal from './components/AddVarietyModal.jsx';
 import AddRecipeModal from './components/AddRecipeModal.jsx';
 import WriteArticleModal from './components/WriteArticleModal.jsx';
 import AskQuestionModal from './components/AskQuestionModal.jsx';
-import MoreSheetModal from './components/MoreSheetModal.jsx';
 import ContestDetailModal from './components/ContestDetailModal.jsx';
 import DiaryReportModal from './components/DiaryReportModal.jsx';
 
@@ -148,18 +148,19 @@ export default function App() {
           pattern) so their internal form state survives being hidden — this is what
           lets "add your own variety" opened from inside the diary wizard return to
           the wizard without losing progress. */}
-      <AuthModal />
-      <EditProfileModal />
-      <CreateDiaryWizard />
-      <AddVarietyModal />
-      <AddRecipeModal />
-      <WriteArticleModal />
-      <AskQuestionModal />
-      <MoreSheetModal />
-      <ContestDetailModal />
-      <DiaryReportModal />
+<AuthModal />
+<EditProfileModal />
+<CreateDiaryWizard />
+<AddVarietyModal />
+<AddRecipeModal />
+<WriteArticleModal />
+<AskQuestionModal />
+<MoreSheetModal />
+<ContestDetailModal />
+<ContestJoinModal />
+<DiaryReportModal />
 
-      <ToastStack />
+<ToastStack />
     </>
   );
 }
