@@ -592,3 +592,28 @@ export function contestRowToJs(row) {
     createdAt: row.created_at // Задача 7 (Sidebar.jsx): счётчик "нового" в сайдбаре
   };
 }
+
+/**
+ * settingsRowToJs(row) — маппер единственной строки site_settings (id=true)
+ * в camelCase-объект для AppContext.settings. wipTabs — Задача 4/6 текущего
+ * захода (скрытые вкладки с бейджем "В разработке" в Sidebar.jsx);
+ * `|| []` на случай NULL до применения DEFAULT '{}' из миграции 0015.
+ */
+export function settingsRowToJs(row) {
+  return {
+    siteName: row.site_name,
+    siteDescription: row.site_description,
+    contactEmail: row.contact_email,
+    telegram: row.telegram,
+    instagram: row.instagram,
+    bannerEnabled: row.banner_enabled,
+    bannerText: row.banner_text,
+    bannerPhoto: row.banner_photo_url,
+    heroPhoto: row.hero_photo_url,
+    registrationEnabled: row.registration_enabled,
+    showQuestions: row.show_questions,
+    showFeed: row.show_feed,
+    wipTabs: row.wip_tabs || [],
+    updatedAt: row.updated_at
+  };
+}

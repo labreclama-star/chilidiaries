@@ -1,6 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext.jsx';
 
+// Задача 5: список всех скрываемых путей — захардкожен здесь же. Главная
+// (/) и личный раздел (/my-diaries) намеренно не включены — их нельзя
+// спрятать через эту фичу.
+const WIP_TAB_OPTIONS = [
+  { to: '/feed', label: 'Лента' },
+  { to: '/diaries', label: 'Дневники' },
+  { to: '/growers', label: 'Гроверы' },
+  { to: '/leaderboard', label: 'Рейтинг' },
+  { to: '/varieties', label: 'Сорта' },
+  { to: '/questions', label: 'Вопросы' },
+  { to: '/recipes', label: 'Рецепты' },
+  { to: '/blog', label: 'Блог' },
+  { to: '/lights', label: 'Свет' },
+  { to: '/nutrients', label: 'Удобрения' },
+  { to: '/contests', label: 'Конкурсы' },
+  { to: '/how', label: 'Как это работает' }
+];
+
 export default function AdminSettings() {
   const { settings, adminUpdateSettings } = useApp();
   const [form, setForm] = useState(settings);
@@ -15,6 +33,15 @@ export default function AdminSettings() {
 
   function toggle(key) {
     setForm((f) => ({ ...f, [key]: !f[key] }));
+  }
+
+  // Задача 5: чекбокс вкладки — toggle пути в массиве form.wipTabs.
+  function toggleWipTab(path) {
+    setForm((f) => {
+      const current = f.wipTabs || [];
+      const next = current.includes(path) ? current.filter((p) => p !== path) : [...current, path];
+      return { ...f, wipTabs: next };
+    });
   }
 
   function handleBannerPhoto(e) {
@@ -92,6 +119,24 @@ export default function AdminSettings() {
           <input type="checkbox" checked={!!form.showFeed} onChange={() => toggle('showFeed')} />
           Показывать раздел «Лента» в меню
         </label>
+
+        <h2 className="admin-section-title">Вкладки в разработке</h2>
+        <p className="sub" style={{ marginTop: -8 }}>
+          Отмеченные разделы остаются в сайдбаре, но помечены бейджем «В разработке» —
+          клик по ним ничего не открывает.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+          {WIP_TAB_OPTIONS.map((tab) => (
+            <label key={tab.to} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+              <input
+                type="checkbox"
+                checked={(form.wipTabs || []).includes(tab.to)}
+                onChange={() => toggleWipTab(tab.to)}
+              />
+              {tab.label}
+            </label>
+          ))}
+        </div>
 
         <button type="submit" className="btn btn-primary btn-block">Сохранить настройки</button>
       </form>

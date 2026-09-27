@@ -24,11 +24,11 @@ const NAV_ITEMS = [
 
 const LASTSEEN_PREFIX = 'cd_lastseen:';
 
-// Задача 7: разделы, для которых считаем счётчик «нового». Пока только
-// конкурсы — created_at реально пришёл в contestRowToJs. Для /varieties
-// в этой итерации не подтверждено, что колонка created_at есть в БД и
-// что она попадает в маппер — не выдумываем, просто не показываем
-// счётчик для сортов (согласно задаче).
+// Разделы, для которых считаем счётчик «нового». Пока только конкурсы —
+// created_at реально пришёл в contestRowToJs. Для /varieties в этой
+// итерации не подтверждено, что колонка created_at есть в БД и что она
+// попадает в маппер — не выдумываем, просто не показываем счётчик для
+// сортов.
 const COUNTABLE_PATHS = ['/contests'];
 
 function getLastSeen(path) {
@@ -48,7 +48,7 @@ function markSeen(path) {
 }
 
 export default function Sidebar() {
-  const { theme, setTheme, sidebarCollapsed, setSidebarCollapsed, openWizard, currentUser, settings, contests } = useApp();
+  const { theme, setTheme, sidebarCollapsed, setSidebarCollapsed, openWizard, currentUser, settings, contests, showToast } = useApp();
   const isLight = theme === 'light';
   const location = useLocation();
 
@@ -59,8 +59,8 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (!COUNTABLE_PATHS.includes(location.pathname)) return;
-    // Задача 7, п.5: при первом заходе (нет метки) — просто выставляем
-    // метку с этого момента, ничего не показывая как "уже виденное".
+    // При первом заходе (нет метки) — просто выставляем метку с этого
+    // момента, ничего не показывая как "уже виденное".
     markSeen(location.pathname);
     setSeenTick((t) => t + 1);
   }, [location.pathname]);
@@ -70,7 +70,7 @@ export default function Sidebar() {
     COUNTABLE_PATHS.forEach((path) => {
       const lastSeen = getLastSeen(path);
       // Нет метки — пользователь ещё не открывал раздел, ничего не
-      // "пропущено" (см. п.5 задачи): newCount = 0.
+      // "пропущено": newCount = 0.
       if (!lastSeen) {
         counts[path] = 0;
         return;
@@ -85,6 +85,13 @@ export default function Sidebar() {
 
   function countNew(path) {
     return newCounts[path] || 0;
+  }
+
+  // Задача 6 текущего захода: разделы, скрытые админом в /admin/settings —
+  // остаются в списке, но помечены бейджем и не кликабельны.
+  const wipTabs = settings.wipTabs || [];
+  function isWip(path) {
+    return wipTabs.includes(path);
   }
 
   const filtered = NAV_ITEMS.filter((item) => {
@@ -111,25 +118,36 @@ export default function Sidebar() {
     openWizard();
   }
 
+  function handleNavClick(e, path) {
+    if (isWip(path)) {
+      e.preventDefault();
+      showToast('Раздел в разработке');
+      return;
+    }
+    if (window.innerWidth <= 900) setSidebarCollapsed(true);
+  }
+
   return (
     <aside className={'sidebar' + (sidebarCollapsed ? ' collapsed' : '')} id="sidebar">
       <nav className="main-nav">
         {navItems.map((item) => {
           const newCount = countNew(item.to);
+          const wip = isWip(item.to);
           return (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
-              className={({ isActive }) => (isActive ? 'active' : '')}
+              className={({ isActive }) => (isActive ? 'active' : '') + (wip ? ' wip' : '')}
               title={sidebarCollapsed ? item.label : undefined}
-              onClick={() => { if (window.innerWidth <= 900) setSidebarCollapsed(true); }}
+              onClick={(e) => handleNavClick(e, item.to)}
             >
               <span className="nav-icon-wrap">
                 <item.Icon className="nav-icon" width="18" height="18" />
                 {newCount > 0 && <span className="nav-badge">{newCount}</span>}
               </span>
               <span className="nav-label">{item.label}</span>
+              {wip && <span className="nav-wip-badge">В разработке</span>}
             </NavLink>
           );
         })}

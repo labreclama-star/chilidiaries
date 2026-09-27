@@ -36,6 +36,7 @@ import {
 import { fetchInitialQuestions, createAnswer, insertQuestion, insertAnswer, updateQuestionStatus } from '../services/questionService.js';
 import { fetchInitialLights, createLightFromForm } from '../services/lightService.js';
 import { fetchInitialNutrients, createNutrientFromForm } from '../services/nutrientService.js';
+import { fetchSiteSettings, updateSiteSettings as updateSiteSettingsRequest } from '../services/siteSettingsService.js';
 import { login as loginRequest, signup as signupRequest, logout as logoutRequest } from '../services/authService.js';
 import { loadState, saveState, clearState } from '../services/persistenceService.js';
 // Этап 4: нужен прямой доступ к клиенту для getSession()/onAuthStateChange —
@@ -74,7 +75,8 @@ const DEFAULT_SETTINGS = {
   heroPhoto: null,
   registrationEnabled: true,
   showQuestions: true,
-  showFeed: true
+  showFeed: true,
+  wipTabs: [] // Задача 6 (Sidebar.jsx): скрытые вкладки с бейджем "В разработке"
 };
 
 export function AppProvider({ children }) {
@@ -170,7 +172,7 @@ export function AppProvider({ children }) {
         return;
       }
       const g = growersRes.data;
-      const [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes, votesRes, winsRes] = await Promise.all([
+      const [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes, votesRes, winsRes, settingsRes] = await Promise.all([
         fetchInitialVarieties(),
         fetchInitialDiaries(g),
         fetchInitialRecipes(),
@@ -187,7 +189,11 @@ export function AppProvider({ children }) {
         // Победы в конкурсах (Этап 6) — для бейджа "🏅 Победитель конкурса" в
         // AchievementBadges. Та же логика, что у votesRes: без побед бейдж
         // просто не загорится ни у кого, это не повод рушить всё приложение.
-        fetchAllContestWinnersRequest()
+        fetchAllContestWinnersRequest(),
+        // Настройки сайта (Задача 4 текущего захода) — та же логика, что у
+        // votesRes/winsRes: без них приложение продолжает жить на
+        // DEFAULT_SETTINGS, это не повод рушить весь экран ошибкой.
+        fetchSiteSettings()
       ]);
       const firstError = [vRes, dRes, rRes, pRes, cRes, qRes, ltRes, ntRes].find((r) => r.error)?.error;
       if (firstError) {
@@ -213,6 +219,11 @@ export function AppProvider({ children }) {
         console.warn('[contestWins] Не удалось загрузить победы в конкурсах:', winsRes.error.message);
       } else {
         setContestWins(winsRes.data);
+      }
+      if (settingsRes.error) {
+        console.warn('[siteSettings] Не удалось загрузить настройки сайта, использую DEFAULT_SETTINGS:', settingsRes.error.message);
+      } else {
+        setSettings(settingsRes.data);
       }
       setLoading(false);
     })();
@@ -1724,7 +1735,17 @@ export function AppProvider({ children }) {
   }, [showToast]);
 
   // ---- настройки сайта ----
-  const adminUpdateSettings = useCallback((patch) => {
+  // Задача 4 текущего захода: раньше писал только в React state (фиктивно —
+  // слетало на Cmd+R). Теперь реальный UPDATE в site_settings; при ошибке
+  // (например, RLS не пустила мок-админа без auth.uid() — см. предупреждение
+  // в чате) state НЕ трогаем, чтобы форма не разъехалась с тем, что реально
+  // сохранено в БД.
+  const adminUpdateSettings = useCallback(async (patch) => {
+    const { error } = await updateSiteSettingsRequest(patch);
+    if (error) {
+      showToast(error.message || 'Не удалось сохранить настройки');
+      return;
+    }
     setSettings((prev) => ({ ...prev, ...patch }));
     showToast('Настройки сохранены', 'success');
   }, [showToast]);
