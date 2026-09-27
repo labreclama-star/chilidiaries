@@ -5,6 +5,7 @@ import Modal from '../../components/Modal.jsx';
 import AdminConfirmDialog from '../components/AdminConfirmDialog.jsx';
 import Avatar from '../../components/Avatar.jsx';
 import AdminContestWinnerModal from '../components/AdminContestWinnerModal.jsx';
+import Spinner from '../../components/Spinner.jsx';
 
 const emptyForm = () => ({
   title: '', desc: '', fullDesc: '', prize: '', startDate: '', deadline: '',
@@ -61,6 +62,7 @@ export default function AdminContests() {
   const [removingUserId, setRemovingUserId] = useState(null);
   const [winners, setWinners] = useState({}); // { [contestId]: { winnerUserId, winnerDiaryId, place } }
   const [winnerModalContestId, setWinnerModalContestId] = useState(null);
+  const [submitting, setSubmitting] = useState(false); // Задача 3: спиннер на кнопке создания/сохранения конкурса
 
   // Задача 2: участники грузятся через реальный getContestParticipants
   // (тот же вызов, что у AdminContestWinnerModal/публичной таблицы
@@ -140,16 +142,21 @@ export default function AdminContests() {
     setEditing(c);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const rules = form.rules.split('\n').map((s) => s.trim()).filter(Boolean);
     const payload = { ...form, rules };
-    if (editing && editing.id) {
-      adminUpdateContest(editing.id, payload);
-    } else {
-      adminAddContest(payload);
+    setSubmitting(true);
+    try {
+      if (editing && editing.id) {
+        await adminUpdateContest(editing.id, payload);
+      } else {
+        await adminAddContest(payload);
+      }
+      setEditing(null);
+    } finally {
+      setSubmitting(false);
     }
-    setEditing(null);
   }
 
   const confirming = confirmDeleteId ? contests.find((c) => c.id === confirmDeleteId) : null;
@@ -275,7 +282,11 @@ export default function AdminContests() {
               <img src={form.photo} alt="" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: '12px 4px 12px 4px' }} />
             </div>
           )}
-          <button type="submit" className="btn btn-primary btn-block">{editing && editing.id ? 'Сохранить' : 'Создать конкурс'}</button>
+          <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+            {submitting
+              ? (<><Spinner size={14} /> {editing && editing.id ? 'Сохраняю…' : 'Создаю…'}</>)
+              : (editing && editing.id ? 'Сохранить' : 'Создать конкурс')}
+          </button>
         </form>
       </Modal>
 

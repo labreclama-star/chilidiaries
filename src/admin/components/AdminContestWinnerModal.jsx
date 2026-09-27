@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Modal from '../../components/Modal.jsx';
 import Avatar from '../../components/Avatar.jsx';
+import Spinner from '../../components/Spinner.jsx';
 import { useApp } from '../../context/AppContext.jsx';
 
 /**
@@ -122,7 +123,7 @@ export default function AdminContestWinnerModal({ contest, onClose, onDeclared }
           )}
 
           <button className="btn btn-primary btn-block" disabled={!selectedUserId || submitting} onClick={handleConfirm}>
-            {submitting ? 'Отправляю…' : 'Подтвердить'}
+            {submitting ? (<><Spinner size={14} /> Отправляю…</>) : 'Подтвердить'}
           </button>
         </>
       )}

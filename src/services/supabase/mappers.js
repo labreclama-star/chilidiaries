@@ -588,6 +588,7 @@ export function contestRowToJs(row) {
     photo: row.photo_url,
     sponsor: row.sponsor,
     rules: row.rules || [],
-    howToJoin: row.how_to_join
+    howToJoin: row.how_to_join,
+    createdAt: row.created_at // Задача 7 (Sidebar.jsx): счётчик "нового" в сайдбаре
   };
 }

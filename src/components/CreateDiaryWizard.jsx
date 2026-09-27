@@ -1,7 +1,13 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal.jsx';
+import Spinner from './Spinner.jsx';
 import { useApp } from '../context/AppContext.jsx';
 import { fmtNum, REPORT_INTERVALS, intervalLabel, DIARY_STAGES } from '../utils/helpers.js';
+
+// Сколько сортов показываем, пока поиск пустой (иначе рендерим все 196
+// карточек сразу — Задача 4).
+const VARIETIES_PREVIEW_COUNT = 12;
 
 export default function CreateDiaryWizard() {
   const navigate = useNavigate();
@@ -13,6 +19,40 @@ export default function CreateDiaryWizard() {
 
   const isOpen = activeModal === 'wizard';
   const selectedVarieties = wizard.varietyIds.map((id) => varieties.find((v) => v.id === id)).filter(Boolean);
+
+  // Задача 4: локальный поиск по названию сорта на шаге 1.
+  const [varietyQuery, setVarietyQuery] = useState('');
+  // "Показать все" — только пока запрос пустой; при непустом запросе
+  // ограничения нет, показываем все совпадения сразу.
+  const [showAllVarieties, setShowAllVarieties] = useState(false);
+
+  const trimmedQuery = varietyQuery.trim().toLowerCase();
+  const matchingVarieties = trimmedQuery
+    ? varieties.filter((v) => v.name.toLowerCase().includes(trimmedQuery))
+    : varieties;
+
+  let visibleBase;
+  let varietiesHint = null;
+  if (!trimmedQuery) {
+    visibleBase = showAllVarieties ? varieties : varieties.slice(0, VARIETIES_PREVIEW_COUNT);
+    if (!showAllVarieties && varieties.length > VARIETIES_PREVIEW_COUNT) {
+      varietiesHint = { type: 'showAll' };
+    }
+  } else {
+    visibleBase = matchingVarieties;
+    varietiesHint = { type: 'found', count: matchingVarieties.length };
+  }
+
+  // Выбранные сорта всегда видны в сетке, даже если их нет среди
+  // совпадений/превью — добавляем их отдельно с дедупликацией.
+  const visibleIds = new Set(visibleBase.map((v) => v.id));
+  const forcedSelected = selectedVarieties.filter((v) => !visibleIds.has(v.id));
+  const displayedVarieties = [...visibleBase, ...forcedSelected];
+
+  function handleVarietyQueryChange(value) {
+    setVarietyQuery(value);
+    setShowAllVarieties(false);
+  }
 
   function goToStep(n) {
     if (n === 2 && wizard.varietyIds.length === 0) return; // guarded by button disabled state too
@@ -27,25 +67,33 @@ export default function CreateDiaryWizard() {
     reader.readAsDataURL(file);
   }
 
+  // Задача 3: локальный submitting — блокируем кнопку до завершения createDiary.
+  const [submitting, setSubmitting] = useState(false);
+
   async function handleCreate() {
     if (!currentUser) {
       closeModal();
       openModal('auth', { returnTo: 'wizard' });
       return;
     }
-    const diary = await createDiary({
-      title: wizard.title,
-      note: wizard.note,
-      varieties: selectedVarieties.length ? selectedVarieties : [varieties[0]],
-      location: wizard.location,
-      medium: wizard.medium,
-      startDate: wizard.date,
-      coverPhoto: wizard.photo,
-      reportInterval: wizard.reportInterval,
-      stage: wizard.stage
-    });
-    closeModal();
-    if (diary) navigate(`/diaries/${diary.id}`);
+    setSubmitting(true);
+    try {
+      const diary = await createDiary({
+        title: wizard.title,
+        note: wizard.note,
+        varieties: selectedVarieties.length ? selectedVarieties : [varieties[0]],
+        location: wizard.location,
+        medium: wizard.medium,
+        startDate: wizard.date,
+        coverPhoto: wizard.photo,
+        reportInterval: wizard.reportInterval,
+        stage: wizard.stage
+      });
+      closeModal();
+      if (diary) navigate(`/diaries/${diary.id}`);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const primary = selectedVarieties[0] || varieties[0];
@@ -73,8 +121,16 @@ export default function CreateDiaryWizard() {
               + Своего сорта нет в списке
             </button>
           </div>
+          <div className="field">
+            <input
+              type="text"
+              placeholder="Начни вводить название сорта…"
+              value={varietyQuery}
+              onChange={(e) => handleVarietyQueryChange(e.target.value)}
+            />
+          </div>
           <div className="pick-grid">
-            {varieties.map((v) => (
+            {displayedVarieties.map((v) => (
               <div
                 key={v.id}
                 className={'pick-item' + (wizard.varietyIds.includes(v.id) ? ' selected' : '')}
@@ -85,6 +141,21 @@ export default function CreateDiaryWizard() {
               </div>
             ))}
           </div>
+          {varietiesHint && varietiesHint.type === 'showAll' && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ marginTop: 8, padding: '4px 10px' }}
+              onClick={() => setShowAllVarieties(true)}
+            >
+              Показать все ({varieties.length})
+            </button>
+          )}
+          {varietiesHint && varietiesHint.type === 'found' && (
+            <span style={{ display: 'block', marginTop: 8, fontSize: 11.5, color: 'var(--cream-faint)' }}>
+              Найдено: {varietiesHint.count}
+            </span>
+          )}
           <div className="wizard-nav">
             <span />
             <button className="btn btn-primary" disabled={wizard.varietyIds.length === 0} onClick={() => goToStep(2)}>Далее →</button>
@@ -174,8 +245,10 @@ export default function CreateDiaryWizard() {
             Старт: {wizard.date || 'сегодня'}
           </div>
           <div className="wizard-nav">
-            <button className="btn btn-outline" onClick={() => goToStep(2)}>← Назад</button>
-            <button className="btn btn-primary" onClick={handleCreate}>Создать дневник 🌶️</button>
+            <button className="btn btn-outline" onClick={() => goToStep(2)} disabled={submitting}>← Назад</button>
+            <button className="btn btn-primary" disabled={submitting} onClick={handleCreate}>
+              {submitting ? (<><Spinner size={14} /> Создаю…</>) : 'Создать дневник 🌶️'}
+            </button>
           </div>
         </div>
       )}

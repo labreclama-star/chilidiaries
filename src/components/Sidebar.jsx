@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext.jsx';
 import {
   IconHome, IconBook, IconBookmark, IconUsers, IconTrophy, IconPepper,
@@ -21,9 +22,70 @@ const NAV_ITEMS = [
   { to: '/how', label: 'Как это работает', Icon: IconInfo }
 ];
 
+const LASTSEEN_PREFIX = 'cd_lastseen:';
+
+// Задача 7: разделы, для которых считаем счётчик «нового». Пока только
+// конкурсы — created_at реально пришёл в contestRowToJs. Для /varieties
+// в этой итерации не подтверждено, что колонка created_at есть в БД и
+// что она попадает в маппер — не выдумываем, просто не показываем
+// счётчик для сортов (согласно задаче).
+const COUNTABLE_PATHS = ['/contests'];
+
+function getLastSeen(path) {
+  try {
+    return localStorage.getItem(LASTSEEN_PREFIX + path);
+  } catch {
+    return null;
+  }
+}
+
+function markSeen(path) {
+  try {
+    localStorage.setItem(LASTSEEN_PREFIX + path, new Date().toISOString());
+  } catch {
+    // localStorage недоступен (приватный режим и т.п.) — просто не считаем счётчики.
+  }
+}
+
 export default function Sidebar() {
-  const { theme, setTheme, sidebarCollapsed, setSidebarCollapsed, openWizard, currentUser, settings } = useApp();
+  const { theme, setTheme, sidebarCollapsed, setSidebarCollapsed, openWizard, currentUser, settings, contests } = useApp();
   const isLight = theme === 'light';
+  const location = useLocation();
+
+  // Растёт при каждом заходе на countable-путь — нужен, чтобы useMemo
+  // пересчитался сразу после того, как markSeen обновил localStorage
+  // (сам localStorage не реактивен).
+  const [seenTick, setSeenTick] = useState(0);
+
+  useEffect(() => {
+    if (!COUNTABLE_PATHS.includes(location.pathname)) return;
+    // Задача 7, п.5: при первом заходе (нет метки) — просто выставляем
+    // метку с этого момента, ничего не показывая как "уже виденное".
+    markSeen(location.pathname);
+    setSeenTick((t) => t + 1);
+  }, [location.pathname]);
+
+  const newCounts = useMemo(() => {
+    const counts = {};
+    COUNTABLE_PATHS.forEach((path) => {
+      const lastSeen = getLastSeen(path);
+      // Нет метки — пользователь ещё не открывал раздел, ничего не
+      // "пропущено" (см. п.5 задачи): newCount = 0.
+      if (!lastSeen) {
+        counts[path] = 0;
+        return;
+      }
+      const lastSeenTime = new Date(lastSeen).getTime();
+      const source = path === '/contests' ? contests : [];
+      counts[path] = source.filter((item) => item.createdAt && new Date(item.createdAt).getTime() > lastSeenTime).length;
+    });
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contests, seenTick]);
+
+  function countNew(path) {
+    return newCounts[path] || 0;
+  }
 
   const filtered = NAV_ITEMS.filter((item) => {
     if (item.to === '/feed') return settings.showFeed;
@@ -52,19 +114,25 @@ export default function Sidebar() {
   return (
     <aside className={'sidebar' + (sidebarCollapsed ? ' collapsed' : '')} id="sidebar">
       <nav className="main-nav">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            className={({ isActive }) => (isActive ? 'active' : '')}
-            title={sidebarCollapsed ? item.label : undefined}
-            onClick={() => { if (window.innerWidth <= 900) setSidebarCollapsed(true); }}
-          >
-            <item.Icon className="nav-icon" width="18" height="18" />
-            <span className="nav-label">{item.label}</span>
-          </NavLink>
-        ))}
+        {navItems.map((item) => {
+          const newCount = countNew(item.to);
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => (isActive ? 'active' : '')}
+              title={sidebarCollapsed ? item.label : undefined}
+              onClick={() => { if (window.innerWidth <= 900) setSidebarCollapsed(true); }}
+            >
+              <span className="nav-icon-wrap">
+                <item.Icon className="nav-icon" width="18" height="18" />
+                {newCount > 0 && <span className="nav-badge">{newCount}</span>}
+              </span>
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          );
+        })}
       </nav>
       <div className="sidebar-bottom">
         <button className="btn-icon" aria-label="Переключить тему" title="Светлая/тёмная тема" onClick={toggleTheme}>
