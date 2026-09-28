@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal.jsx';
 import Spinner from './Spinner.jsx';
+import PhotoFrame from './PhotoFrame.jsx';
 import { useApp } from '../context/AppContext.jsx';
 import { fmtNum, REPORT_INTERVALS, intervalLabel, DIARY_STAGES } from '../utils/helpers.js';
 
@@ -223,8 +224,8 @@ export default function CreateDiaryWizard() {
             <input type="file" accept="image/*" onChange={handlePhotoChange} />
           </div>
           {wizard.photo && (
-            <div style={{ marginBottom: 6 }}>
-              <img src={wizard.photo} alt="" style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: '16px 4px 16px 4px' }} />
+            <div style={{ position: 'relative', overflow: 'hidden', width: '100%', height: 200, borderRadius: '16px 4px 16px 4px', marginBottom: 6, background: 'var(--soil-850)' }}>
+              <PhotoFrame src={wizard.photo} />
             </div>
           )}
           <div className="wizard-nav">

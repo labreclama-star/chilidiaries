@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Modal from './Modal.jsx';
+import Spinner from './Spinner.jsx';
 import { useApp } from '../context/AppContext.jsx';
 
 const emptyForm = () => ({
@@ -11,6 +12,10 @@ const emptyForm = () => ({
 export default function AddVarietyModal() {
   const { activeModal, modalPayload, closeModal, currentUser, openModal, addVariety } = useApp();
   const [form, setForm] = useState(emptyForm);
+  // Локальный флаг — не связан с submitting в CreateDiaryWizard: даже при
+  // вызове отсюда с returnToWizard=true, это состояние этой модалки, вызов
+  // из визарда её никак не переопределяет.
+  const [submitting, setSubmitting] = useState(false);
 
   const isOpen = activeModal === 'addVariety';
   const returnToWizard = modalPayload && modalPayload.returnTo === 'wizard';
@@ -32,15 +37,20 @@ export default function AddVarietyModal() {
     closeModal();
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!currentUser) {
       closeModal();
       openModal('auth');
       return;
     }
-    addVariety(form, { returnToWizard });
-    setForm(emptyForm());
+    setSubmitting(true);
+    try {
+      await addVariety(form, { returnToWizard });
+      setForm(emptyForm());
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -80,7 +90,9 @@ export default function AddVarietyModal() {
             <img src={form.photo} alt="" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: '12px 4px 12px 4px' }} />
           </div>
         )}
-        <button type="submit" className="btn btn-primary btn-block">Добавить в каталог</button>
+        <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+          {submitting ? (<><Spinner size={14} /> Добавляю…</>) : 'Добавить в каталог'}
+        </button>
       </form>
     </Modal>
   );

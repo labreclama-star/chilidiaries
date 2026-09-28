@@ -19,6 +19,7 @@ import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
 import { photoUrlForDb } from './_photo.js';
 import { diaryRowToJs, diaryListRowToJs, diaryReportRowToJs, commentRowToJs } from './supabase/mappers.js';
+import { PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 
 // Внутреннее хранилище появляется только после того, как Supabase оказался
 // недоступен/пустым и fetchInitialDiaries падает на мок — как и раньше,
@@ -311,6 +312,115 @@ export async function updateDiaryStage(diaryId, stage) {
     if (error) return fail(error);
     if (!data) return fail(new Error('Не удалось изменить стадию: дневник не найден или нет прав'));
     return ok(data.stage);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * updateDiary(id, patch) — Этап 1.5 текущего захода: реальный UPDATE
+ * diaries для админки (AdminDiaries.jsx). Поля patch — в тех же
+ * camelCase-именах, что возвращает diaryRowToJs (title, desc, stage,
+ * location, medium, varietyId, coverPhoto, reportInterval), плюс
+ * isPrivate — колонка is_private есть в таблице, но diaryRowToJs её
+ * намеренно не возвращает (см. комментарий там), поэтому если форма
+ * админки такого поля не показывает — patch.isPrivate просто никогда
+ * не придёт, и колонка не тронется.
+ *
+ * .select(DIARY_FULL_SELECT) — тот же полный select, что у getDiaryById,
+ * чтобы adminUpdateDiary в AppContext могла (при желании) заменить
+ * состояние дневника целиком, а не только патчем.
+ */
+export async function updateDiary(id, patch) {
+  try {
+    const row = {};
+    if (patch.title !== undefined) row.title = patch.title;
+    if (patch.desc !== undefined) row.description = patch.desc;
+    if (patch.stage !== undefined) row.stage = patch.stage;
+    if (patch.location !== undefined) row.location = patch.location;
+    if (patch.medium !== undefined) row.medium = patch.medium;
+    if (patch.varietyId !== undefined) row.variety_id = patch.varietyId;
+    if (patch.coverPhoto !== undefined) row.cover_photo_url = await photoUrlForDb(patch.coverPhoto, 'diaryService');
+    if (patch.reportInterval !== undefined) row.report_interval = patch.reportInterval;
+    if (patch.isPrivate !== undefined) row.is_private = patch.isPrivate;
+
+    const { data, error } = await supabase
+      .from('diaries')
+      .update(row)
+      .eq('id', id)
+      .select(DIARY_FULL_SELECT)
+      .maybeSingle();
+    if (error) return fail(error);
+    if (!data) return fail(new Error('Дневник не найден или нет прав'));
+    return ok(diaryRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteDiary(id) — Этап 1.5. Не знаем заранее, есть ли в схеме
+ * ON DELETE CASCADE на diary_reports/diary_varieties/diary_photos/comments
+ * (миграции с их определением не приложены) — defensive-подход, как в
+ * questionService.deleteQuestion: пробуем простой DELETE; при FK-нарушении
+ * (23503) вручную чистим дочерние таблицы в порядке зависимостей
+ * (diary_photos -> diary_reports, затем diary_varieties и comments) и
+ * повторяем удаление дневника. Если в схеме уже есть настоящий CASCADE —
+ * до этой ветки дело не доходит.
+ */
+export async function deleteDiary(id) {
+  try {
+    const { error } = await supabase.from('diaries').delete().eq('id', id);
+    if (error) {
+      if (error.code === PG_FOREIGN_KEY_VIOLATION) {
+        const { data: reports, error: reportsSelectError } = await supabase
+          .from('diary_reports')
+          .select('id')
+          .eq('diary_id', id);
+        if (reportsSelectError) return fail(reportsSelectError);
+        const reportIds = (reports || []).map((r) => r.id);
+        if (reportIds.length) {
+          const { error: photosError } = await supabase.from('diary_photos').delete().in('diary_report_id', reportIds);
+          if (photosError) return fail(photosError);
+          const { error: reportsError } = await supabase.from('diary_reports').delete().eq('diary_id', id);
+          if (reportsError) return fail(reportsError);
+        }
+        const { error: varietiesError } = await supabase.from('diary_varieties').delete().eq('diary_id', id);
+        if (varietiesError) return fail(varietiesError);
+        const { error: commentsError } = await supabase.from('comments').delete().eq('diary_id', id);
+        if (commentsError) return fail(commentsError);
+        const { error: retryError } = await supabase.from('diaries').delete().eq('id', id);
+        if (retryError) return fail(retryError);
+        return ok({ id });
+      }
+      return fail(error);
+    }
+    return ok({ id });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteWeekReport(reportId) — Этап 1.5. Принимает НАСТОЯЩИЙ id строки
+ * diary_reports (не report_number/day) — см. правку diaryReportRowToJs
+ * в mappers.js (теперь week-объекты несут id). Тот же defensive-подход:
+ * при FK-нарушении на diary_photos сначала удаляем фото, потом отчёт.
+ */
+export async function deleteWeekReport(reportId) {
+  try {
+    const { error } = await supabase.from('diary_reports').delete().eq('id', reportId);
+    if (error) {
+      if (error.code === PG_FOREIGN_KEY_VIOLATION) {
+        const { error: photosError } = await supabase.from('diary_photos').delete().eq('diary_report_id', reportId);
+        if (photosError) return fail(photosError);
+        const { error: retryError } = await supabase.from('diary_reports').delete().eq('id', reportId);
+        if (retryError) return fail(retryError);
+        return ok({ id: reportId });
+      }
+      return fail(error);
+    }
+    return ok({ id: reportId });
   } catch (e) {
     return fail(e);
   }

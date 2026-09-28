@@ -67,6 +67,33 @@ export async function fetchInitialPosts() {
   }
 }
 
+/**
+ * fetchAllBlogPosts() — фикс: fetchInitialPosts (публичный список для
+ * /blog) фильтрует .eq('status', 'approved') — это правильно для
+ * публичной ленты, но означает, что pending/rejected статьи никогда не
+ * попадают в общий state blogPosts, и админка (AdminBlog.jsx) их не видит,
+ * модерация невозможна. Эта функция — отдельный SELECT БЕЗ фильтра по
+ * статусу, специально для админки: грузится в её собственный локальный
+ * state через тонкий прокси в AppContext, не подмешивается в общий
+ * blogPosts (публичная лента как фильтровала approved, так и фильтрует).
+ *
+ * Сортировка — published_date DESC (как и ожидалось от списка "последние
+ * сверху"); без fallback'а на мок, как и остальные write/bulk-read функции
+ * этого файла.
+ */
+export async function fetchAllBlogPosts() {
+  try {
+    const { data, error } = await supabase
+      .from('blog_posts')
+      .select('*')
+      .order('published_date', { ascending: false });
+    if (error) return fail(error);
+    return ok((data || []).map(blogPostRowToJs));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 /** getBlogPostById(id) — та же схема fallback'а, что в fetchInitialPosts (без фильтра по статусу, см. комментарий выше). */
 export async function getBlogPostById(id) {
   try {
@@ -175,30 +202,90 @@ export async function incrementBlogViewsRpc(postId) {
   }
 }
 
-// Write-функция — по правилам Этапа 3 не трогаем, остаётся на моке.
-export async function createPostFromForm({ title, varietyId, tags, content, photo, growerId }) {
+/**
+ * updateBlogPost(id, patch) — Этап 1.3 текущего захода: реальный UPDATE
+ * blog_posts для админки (AdminBlog.jsx). Partial-update. slug НЕ
+ * трогаем, если не передан явно (slug используется как публичный URL
+ * статьи — менять его при каждом сохранении заголовка сломало бы уже
+ * расшаренные ссылки).
+ */
+export async function updateBlogPost(id, patch) {
   try {
-    const post = {
-      id: 'b_' + Date.now(),
-      // Раньше было 'article-' + Date.now() (не читаемо, не из title —
-      // риск №5 из отчёта Этапа 1). slug не используется сейчас ни в
-      // роутинге, ни в компонентах (проверено), так что менять формат
-      // безопасно; Date.now() в конце сохраняет уникальность.
-      slug: slugify(title) + '-' + Date.now(),
-      title,
-      growerId,
-      varietyId: varietyId || null,
-      photo: photo || null,
-      tags: tags && tags.length ? tags : ['острый перец'],
-      excerpt: content[0] ? content[0].slice(0, 140) : '',
-      content,
-      date: new Date().toISOString().slice(0, 10),
-      status: 'pending', // goes to moderation — only visible to its author until approved
-      views: 0,
-      likes: 0,
-      liked: false
-    };
-    return ok(post);
+    const row = {};
+    if (patch.title !== undefined) row.title = patch.title;
+    if (patch.slug !== undefined) row.slug = patch.slug;
+    if (patch.varietyId !== undefined) row.variety_id = patch.varietyId || null;
+    if (patch.photo !== undefined) row.photo_url = await photoUrlForDb(patch.photo, 'blogService');
+    if (patch.tags !== undefined) row.tags = patch.tags;
+    if (patch.excerpt !== undefined) row.excerpt = patch.excerpt;
+    if (patch.content !== undefined) row.content = patch.content;
+    if (patch.status !== undefined) row.status = patch.status;
+    if (patch.rejectReason !== undefined) row.reject_reason = patch.rejectReason;
+
+    const { data, error } = await supabase
+      .from('blog_posts')
+      .update(row)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) return fail(error);
+    if (!data) return fail(new Error('Статья не найдена или нет прав'));
+    return ok(blogPostRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** deleteBlogPost(id) — Этап 1.3. Простой DELETE (комментариев/лайков к статьям в этой схеме нет). */
+export async function deleteBlogPost(id) {
+  try {
+    const { error } = await supabase.from('blog_posts').delete().eq('id', id);
+    if (error) return fail(error);
+    return ok({ id });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * moderateBlogPost(id, decision, reason) — Этап 1.3: тонкая обёртка над
+ * updateBlogPost, ничего своего не делает — просто удобное имя для
+ * вызова из adminModerateBlogPost. decision: 'approved' | 'rejected'.
+ */
+export async function moderateBlogPost(id, decision, reason) {
+  return updateBlogPost(id, {
+    status: decision,
+    rejectReason: decision === 'rejected' ? (reason || '') : null
+  });
+}
+
+/**
+ * insertBlogPostFromAdmin(data) — Этап 1.3: заменяет старый мок
+ * createPostFromForm. Реальный INSERT, status сразу 'approved' (админ
+ * публикует напрямую, минуя модерацию), grower_id = growerId,
+ * который передаёт AppContext (currentUser.growerId залогиненного админа).
+ */
+export async function insertBlogPostFromAdmin({ title, varietyId, tags, content, photo, growerId }) {
+  try {
+    const paragraphs = Array.isArray(content) ? content : content ? [String(content)] : [];
+    const { data, error } = await supabase
+      .from('blog_posts')
+      .insert({
+        grower_id: growerId,
+        title,
+        slug: slugify(title) + '-' + Date.now(),
+        variety_id: varietyId || null,
+        photo_url: await photoUrlForDb(photo, 'blogService'),
+        tags: tags && tags.length ? tags : ['острый перец'],
+        excerpt: paragraphs[0] ? paragraphs[0].slice(0, 140) : '',
+        content: paragraphs,
+        status: 'approved',
+        published_date: new Date().toISOString().slice(0, 10)
+      })
+      .select()
+      .single();
+    if (error) return fail(error);
+    return ok(blogPostRowToJs(data));
   } catch (e) {
     return fail(e);
   }

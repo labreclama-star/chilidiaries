@@ -5,6 +5,7 @@
 // в "[object Object]". Явно вытаскиваем message (та же логика, что в
 // reactionsService.js, там она осталась локальной — тот файл не трогаем).
 export const PG_UNIQUE_VIOLATION = '23505';
+export const PG_FOREIGN_KEY_VIOLATION = '23503';
 
 export function toError(error) {
   const err = new Error(error?.message || 'Ошибка запроса к базе данных');

@@ -7,6 +7,7 @@ import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
 import { questionRowToJs, answerRowToJs } from './supabase/mappers.js';
 import { photoUrlForDb } from './_photo.js';
+import { PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 
 function isoDaysAgo(days) {
   return new Date(Date.now() - (days || 0) * 24 * 60 * 60 * 1000).toISOString();
@@ -200,6 +201,61 @@ export async function updateQuestionStatus(questionId, status) {
       return fail(new Error('Не удалось изменить статус вопроса: вопрос не найден или нет прав (менять статус может только его автор)'));
     }
     return ok(data[0].status);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * updateQuestion(id, patch) — Этап 1.4 текущего захода: реальный UPDATE
+ * questions для админки (AdminQuestions.jsx). grower_id/diary_id
+ * намеренно не в списке полей — их не меняем.
+ */
+export async function updateQuestion(id, patch) {
+  try {
+    const row = {};
+    if (patch.text !== undefined) row.text_content = patch.text;
+    if (patch.photo !== undefined) row.photo_url = await photoUrlForDb(patch.photo, 'questionService');
+    if (patch.stage !== undefined) row.stage = patch.stage;
+    if (patch.topic !== undefined) row.topic = patch.topic;
+    if (patch.status !== undefined) row.status = patch.status;
+
+    const { data, error } = await supabase
+      .from('questions')
+      .update(row)
+      .eq('id', id)
+      .select(QUESTION_SELECT)
+      .maybeSingle();
+    if (error) return fail(error);
+    if (!data) return fail(new Error('Вопрос не найден или нет прав'));
+    return ok(questionRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteQuestion(id) — Этап 1.4. Не знаем заранее, есть ли в схеме
+ * ON DELETE CASCADE у answers.question_id — поэтому defensive-подход:
+ * пробуем простой DELETE; если БД отвечает нарушением внешнего ключа
+ * (23503 — RESTRICT/NO ACTION без CASCADE), сначала вручную удаляем
+ * ответы, потом повторяем удаление вопроса. Если CASCADE в схеме уже
+ * есть — до ветки с answers дело не доходит, первый .delete() отрабатывает сам.
+ */
+export async function deleteQuestion(id) {
+  try {
+    const { error } = await supabase.from('questions').delete().eq('id', id);
+    if (error) {
+      if (error.code === PG_FOREIGN_KEY_VIOLATION) {
+        const { error: answersError } = await supabase.from('answers').delete().eq('question_id', id);
+        if (answersError) return fail(answersError);
+        const { error: retryError } = await supabase.from('questions').delete().eq('id', id);
+        if (retryError) return fail(retryError);
+        return ok({ id });
+      }
+      return fail(error);
+    }
+    return ok({ id });
   } catch (e) {
     return fail(e);
   }

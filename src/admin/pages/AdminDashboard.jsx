@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../../context/AppContext.jsx';
 import { rankGrowers, timeAgo } from '../../utils/helpers.js';
@@ -61,8 +62,22 @@ function growthPct(dates) {
 export default function AdminDashboard() {
   const {
     growers, diaries, varieties, recipes, blogPosts, questions, contests,
-    findGrowerById, adminModerateBlogPost
+    findGrowerById, adminModerateBlogPost, fetchAllBlogPosts
   } = useApp();
+
+  // Фикс: useApp().blogPosts — это ТОЛЬКО status='approved' (публичная
+  // лента), поэтому pending-статьи в очереди модерации и в счётчиках не
+  // появлялись. Грузим все статьи отдельно, как в AdminBlog.jsx.
+  const [allPosts, setAllPosts] = useState([]);
+  const loadPosts = useCallback(async () => {
+    const { data, error } = await fetchAllBlogPosts();
+    if (error) {
+      console.warn('[AdminDashboard] Не удалось загрузить статьи для очереди модерации:', error.message);
+      return;
+    }
+    setAllPosts(data || []);
+  }, [fetchAllBlogPosts]);
+  useEffect(() => { loadPosts(); }, [loadPosts]);
 
   const activeGrowers = growers.filter((g) => !g.deleted);
   const activeGrowerDates = activeGrowers.map((g) => safeDate(g.joinedAt));
@@ -73,7 +88,8 @@ export default function AdminDashboard() {
   const totalReports = diaries.reduce((s, d) => s + (d.weeks ? d.weeks.length : 0), 0);
   const followedCount = growers.filter((g) => g._followed).length;
 
-  const pendingPosts = blogPosts.filter((p) => p.status === 'pending');
+  // было: blogPosts.filter(...) — там только approved, поэтому pending не было видно
+  const pendingPosts = allPosts.filter((p) => p.status === 'pending');
   // "Зависшие" вопросы: открыты, без единого ответа, и созданы больше недели
   // назад. createdAt у вопросов — настоящее поле из БД (в отличие от
   // blog_posts, где такого поля нет вовсе, см. переписку по Этапу 2).
@@ -122,8 +138,8 @@ export default function AdminDashboard() {
       author: findGrowerById(p.growerId)?.name || null,
       time: null,
       actions: [
-        { label: '✓ Одобрить', variant: 'approve', onClick: () => adminModerateBlogPost(p.id, 'approved') },
-        { label: '✗ Скрыть', variant: 'reject', onClick: () => adminModerateBlogPost(p.id, 'rejected') }
+        { label: '✓ Одобрить', variant: 'approve', onClick: async () => { await adminModerateBlogPost(p.id, 'approved'); loadPosts(); } },
+        { label: '✗ Скрыть', variant: 'reject', onClick: async () => { await adminModerateBlogPost(p.id, 'rejected'); loadPosts(); } }
       ]
     }))
   ].slice(0, 8);

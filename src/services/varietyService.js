@@ -164,33 +164,120 @@ export async function createVarietyFromForm({ name, species, shuMin, shuMax, dif
 }
 
 /**
- * Builds a new variety object from the admin "Добавить сорт" form. Unlike
- * createVarietyFromForm (used by the public "add your own variety" flow),
- * this lets the admin set rating/capsaicinRating/aromaRating directly instead
- * of always starting at null, and marks the record as not user-submitted.
+ * updateVariety(id, patch) — Этап 1.1 текущего захода: реальный UPDATE
+ * varieties для админки (AdminVarieties.jsx). Partial-update — трогаем
+ * только те поля, что реально пришли в patch.
+ *
+ * shuMin/shuMax обновляются ТОЛЬКО вместе (как и в форме — оба поля
+ * обязательны рядом): normalizeShu ждёт пару значений, поэтому если
+ * прислали только одно из двух, второе достраивается тем же дефолтом,
+ * что и при создании (см. normalizeShu выше). Если в форме админки эти
+ * два поля физически разделены и могут прийти по отдельности — скажи,
+ * поправим на "менять только присланное поле, не трогая другое".
+ *
+ * rating/capsaicinRating/aromaRating — админ может проставить их вручную
+ * (в отличие от обычного addVariety, где они всегда стартуют пустыми);
+ * '' или null очищают поле (NULL в БД), а не 0.
+ *
+ * .select(VARIETY_SELECT).maybeSingle() — не .single(): если RLS
+ * отфильтровал строку (UPDATE 0 строк), maybeSingle() вернёт null без
+ * ошибки, а не бросит "no rows" — это ловим ниже явной проверкой.
  */
-export async function createVarietyFromAdminForm({ name, species, shuMin, shuMax, difficulty, days, origin, desc, photo, rating, capsaicinRating, aromaRating }) {
+export async function updateVariety(id, patch) {
+  try {
+    const row = {};
+    if (patch.name !== undefined) row.name = patch.name;
+    if (patch.species !== undefined) row.species = patch.species;
+    if (patch.shuMin !== undefined || patch.shuMax !== undefined) {
+      const { min, max } = normalizeShu(patch.shuMin, patch.shuMax);
+      row.shu_min = min;
+      row.shu_max = max;
+    }
+    if (patch.difficulty !== undefined) row.difficulty = patch.difficulty;
+    if (patch.days !== undefined) {
+      const { daysMin, daysMax } = normalizeDays(patch.days);
+      row.days_min = daysMin;
+      row.days_max = daysMax;
+    }
+    if (patch.origin !== undefined) row.origin = patch.origin;
+    if (patch.desc !== undefined) row.description = patch.desc;
+    if (patch.photo !== undefined) row.photo_url = await photoUrlForDb(patch.photo, 'varietyService');
+    const num = (x) => (x === undefined ? undefined : (x === null || x === '' ? null : Number(x)));
+    if (patch.rating !== undefined) row.rating = num(patch.rating);
+    if (patch.capsaicinRating !== undefined) row.capsaicin_rating = num(patch.capsaicinRating);
+    if (patch.aromaRating !== undefined) row.aroma_rating = num(patch.aromaRating);
+
+    const { data, error } = await supabase
+      .from('varieties')
+      .update(row)
+      .eq('id', id)
+      .select(VARIETY_SELECT)
+      .maybeSingle();
+    if (error) return fail(toError(error));
+    if (!data) return fail(new Error('Сорт не найден или нет прав'));
+    return ok(varietyRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteVariety(id) — Этап 1.1. Простой DELETE, без ручного каскада: в
+ * отличие от diaries/questions, здесь порядок другой — AppContext уже
+ * ДО вызова этой функции проверяет countDiariesUsingVariety(id) и не
+ * даёт удалить используемый сорт (см. adminDeleteVariety). Так что в
+ * штатном сценарии сюда долетают только неиспользуемые сорта, и FK на
+ * diary_varieties сработать не должен. Реальный конфликт (гонка: кто-то
+ * добавил сорт в дневник между проверкой и удалением) вернётся как
+ * обычная ошибка БД через toError — админ увидит понятный текст, а не
+ * "успех", который на самом деле не сохранился.
+ */
+export async function deleteVariety(id) {
+  try {
+    const { error } = await supabase.from('varieties').delete().eq('id', id);
+    if (error) return fail(toError(error));
+    return ok({ id });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * insertVarietyFromAdmin(data) — Этап 1.1: заменяет старый мок
+ * createVarietyFromAdminForm. Реальный INSERT — тот же паттерн, что
+ * insertVariety (публичная форма "добавить свой сорт"), но:
+ *  - user_added = false, added_by = null (это НЕ пользовательская заявка);
+ *  - админ может сразу проставить rating/capsaicinRating/aromaRating
+ *    (обычная форма всегда стартует с null — компонент их скрывает).
+ */
+export async function insertVarietyFromAdmin({ name, species, shuMin, shuMax, difficulty, days, origin, desc, photo, rating, capsaicinRating, aromaRating }) {
   try {
     const { min, max } = normalizeShu(shuMin, shuMax);
+    const { daysMin, daysMax } = normalizeDays(days);
     const num = (x) => (x !== undefined && x !== null && x !== '' ? Number(x) : null);
-    const variety = {
-      id: 'va_' + Date.now(),
-      name: name || 'Новый сорт',
-      species: species || 'Capsicum annuum',
-      shuMin: min,
-      shuMax: max,
-      difficulty: difficulty || 'Средняя',
-      days: days || '80-100',
-      origin: origin || 'Не указано',
-      desc: desc || 'Описание пока не добавлено.',
-      photo: photo || null,
-      rating: num(rating),
-      capsaicinRating: num(capsaicinRating),
-      aromaRating: num(aromaRating),
-      userAdded: false,
-      addedBy: 'admin'
-    };
-    return ok(variety);
+    const { data, error } = await supabase
+      .from('varieties')
+      .insert({
+        name: (name || '').trim() || 'Новый сорт',
+        species: species || 'Capsicum annuum',
+        shu_min: min,
+        shu_max: max,
+        difficulty: difficulty || 'Средняя',
+        days_min: daysMin,
+        days_max: daysMax,
+        origin: origin || 'Не указано',
+        description: desc || 'Описание пока не добавлено.',
+        photo_url: await photoUrlForDb(photo, 'varietyService'),
+        user_added: false,
+        added_by: null,
+        rating: num(rating),
+        capsaicin_rating: num(capsaicinRating),
+        aroma_rating: num(aromaRating)
+      })
+      .select(VARIETY_SELECT)
+      .single();
+    if (error) return fail(toError(error));
+    return ok(varietyRowToJs(data));
   } catch (e) {
     return fail(e);
   }

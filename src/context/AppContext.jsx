@@ -2,14 +2,23 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 import {
   fetchInitialGrowers, createUserGrower, getGrowerById,
-  updateGrowerProfile, setGrowerOnline
+  updateGrowerProfile, setGrowerOnline,
+  adminUpdateGrower as adminUpdateGrowerRequest,
+  adminDeleteGrower as adminDeleteGrowerRequest
 } from '../services/growerService.js';
-import { fetchInitialVarieties, insertVariety, createVarietyFromAdminForm } from '../services/varietyService.js';
+import {
+  fetchInitialVarieties, insertVariety,
+  insertVarietyFromAdmin, updateVariety as updateVarietyRequest, deleteVariety as deleteVarietyRequest
+} from '../services/varietyService.js';
 import {
   fetchInitialDiaries, insertDiary, insertWeekReport, updateDiaryStage as updateDiaryStageRequest,
-  getDiaryById, insertComment
+  getDiaryById, insertComment,
+  updateDiary as updateDiaryRequest, deleteDiary as deleteDiaryRequest, deleteWeekReport as deleteWeekReportRequest
 } from '../services/diaryService.js';
-import { fetchInitialRecipes, createRecipeFromForm, insertRecipe, incrementRecipeViewsRpc } from '../services/recipeService.js';
+import {
+  fetchInitialRecipes, insertRecipe, incrementRecipeViewsRpc,
+  insertRecipeFromAdmin, updateRecipe as updateRecipeRequest, deleteRecipe as deleteRecipeRequest
+} from '../services/recipeService.js';
 // Этап 5, Группа 4A: голоса за сорта, банк семян, сохранённые рецепты и
 // личные данные, подгружаемые после логина.
 import { fetchAllVarietyVotes, upsertVarietyVote } from '../services/varietyVoteService.js';
@@ -22,7 +31,11 @@ import {
   addDiarySubscription, removeDiarySubscription,
   fetchMyReactions, LIKE_TYPES
 } from '../services/reactionsService.js';
-import { fetchInitialPosts, createPostFromForm, insertBlogPost, incrementBlogViewsRpc } from '../services/blogService.js';
+import {
+  fetchInitialPosts, fetchAllBlogPosts as fetchAllBlogPostsRequest, insertBlogPost, incrementBlogViewsRpc,
+  insertBlogPostFromAdmin, updateBlogPost as updateBlogPostRequest,
+  deleteBlogPost as deleteBlogPostRequest, moderateBlogPost as moderateBlogPostRequest
+} from '../services/blogService.js';
 import {
   fetchInitialContests, insertContest as insertContestRequest, insertContestParticipant,
   joinContestWithDiary as joinContestWithDiaryRequest,
@@ -31,11 +44,21 @@ import {
   getContestWinners as getContestWinnersRequest,
   updateContest as updateContestRequest,
   fetchAllContestWinners as fetchAllContestWinnersRequest,
-  removeContestParticipant as removeContestParticipantRequest
+  removeContestParticipant as removeContestParticipantRequest,
+  deleteContest as deleteContestRequest
 } from '../services/contestService.js';
-import { fetchInitialQuestions, createAnswer, insertQuestion, insertAnswer, updateQuestionStatus } from '../services/questionService.js';
-import { fetchInitialLights, createLightFromForm } from '../services/lightService.js';
-import { fetchInitialNutrients, createNutrientFromForm } from '../services/nutrientService.js';
+import {
+  fetchInitialQuestions, insertQuestion, insertAnswer, updateQuestionStatus,
+  updateQuestion as updateQuestionRequest, deleteQuestion as deleteQuestionRequest
+} from '../services/questionService.js';
+import {
+  fetchInitialLights, insertLightFromForm,
+  updateLight as updateLightRequest, deleteLight as deleteLightRequest
+} from '../services/lightService.js';
+import {
+  fetchInitialNutrients, insertNutrientFromForm,
+  updateNutrient as updateNutrientRequest, deleteNutrient as deleteNutrientRequest
+} from '../services/nutrientService.js';
 import { fetchSiteSettings, updateSiteSettings as updateSiteSettingsRequest } from '../services/siteSettingsService.js';
 import { login as loginRequest, signup as signupRequest, logout as logoutRequest } from '../services/authService.js';
 import { loadState, saveState, clearState } from '../services/persistenceService.js';
@@ -1168,6 +1191,20 @@ export function AppProvider({ children }) {
     });
   }, []);
 
+  /**
+   * fetchAllBlogPosts() — тонкий прокси на сервис, БЕЗ стейта в контексте
+   * (тот же принцип, что getContestParticipants/declareContestWinner ниже):
+   * список нужен ровно в одном месте — AdminBlog.jsx, где статьи любого
+   * статуса (pending/approved/rejected) грузятся в его собственный
+   * локальный useState, а не подмешиваются в общий state.blogPosts
+   * (публичная лента продолжает жить на fetchInitialPosts с фильтром
+   * approved, её эта функция не трогает).
+   */
+  const fetchAllBlogPosts = useCallback(async () => {
+    const { data, error } = await fetchAllBlogPostsRequest();
+    return { data, error };
+  }, []);
+
   // ---- contests ----
   // Этап 5: INSERT в contest_participants. Оптимистично: joinedContestIds и
   // счётчик participants → при ошибке откат + toast(error.message). Дубликат
@@ -1421,35 +1458,62 @@ export function AppProvider({ children }) {
   // ================= АДМИН-ДЕЙСТВИЯ (Этапы 4-12) =================
   // Все функции ниже не проверяют isAdmin сами — это ответственность
   // ProtectedAdminRoute (роуты) и того, что кнопки/формы физически недоступны
-  // за пределами /admin. Общий паттерн — как у остальных мутаций выше:
-  // setState + showToast.
+  // за пределами /admin.
+  //
+  // Большая дочистка текущего захода: раньше половина этих функций делала
+  // ТОЛЬКО setState (работало в UI, но пропадало после Cmd+R). Теперь общий
+  // паттерн для write-действий такой:
+  //   1. await <реальный сервисный вызов>
+  //   2. если error — showToast(сообщение) и вернуть без изменения state
+  //   3. если ок — обновить state и showToast(..., 'success')
+  // "Фото не загрузилось" везде определяется тем же сравнением вход/выход,
+  // что и в adminAddContest/adminUpdateContest (addVariety выше — тот же
+  // паттерн): patch.photo/formData.photo был передан, а в ответе из БД
+  // photo пустой — значит photoUrlForDb внутри сервиса тихо отбросил файл.
 
   // ---- сорта ----
   const adminAddVariety = useCallback(async (formData) => {
-    const { data: v, error } = await createVarietyFromAdminForm(formData);
+    const { data: v, error } = await insertVarietyFromAdmin(formData);
     if (error) {
       showToast(error.message || 'Не удалось добавить сорт');
       return null;
     }
     setVarieties((prev) => [v, ...prev]);
-    showToast(`Сорт «${v.name}» добавлен`, 'success');
+    const photoDropped = !!formData.photo && !v.photo;
+    showToast(
+      photoDropped ? `Сорт «${v.name}» добавлен, но фото не загрузилось — попробуй файл поменьше` : `Сорт «${v.name}» добавлен`,
+      'success'
+    );
     return v;
   }, [showToast]);
 
-  const adminUpdateVariety = useCallback((id, patch) => {
-    setVarieties((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-    showToast('Сорт обновлён', 'success');
+  const adminUpdateVariety = useCallback(async (id, patch) => {
+    const { data: v, error } = await updateVarietyRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить сорт');
+      return { ok: false };
+    }
+    // photo — из ответа БД (реальный URL), а не из patch (там мог быть base64) — тот же приём, что в adminUpdateContest.
+    setVarieties((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: v ? v.photo : x.photo } : x)));
+    const photoDropped = patch.photo !== undefined && !!patch.photo && v && !v.photo;
+    showToast(photoDropped ? 'Сорт обновлён, но фото не загрузилось — попробуй файл поменьше' : 'Сорт обновлён', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  /** Считает, сколько дневников ссылаются на сорт (для предупреждения перед удалением). */
+  /** Считает, сколько дневников ссылаются на сорт (для предупреждения перед удалением). Чистая проверка — не трогаем. */
   const countDiariesUsingVariety = useCallback((varietyId) => (
     diaries.filter((d) => d.varietyId === varietyId || (Array.isArray(d.varietyIds) && d.varietyIds.includes(varietyId))).length
   ), [diaries]);
 
-  const adminDeleteVariety = useCallback((id) => {
+  const adminDeleteVariety = useCallback(async (id) => {
     const usedByCount = countDiariesUsingVariety(id);
     if (usedByCount > 0) {
       showToast(`Нельзя удалить: сорт используется в ${usedByCount} дневник(ах)`);
+      return false;
+    }
+    const { error } = await deleteVarietyRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить сорт');
       return false;
     }
     setVarieties((prev) => prev.filter((v) => v.id !== id));
@@ -1458,121 +1522,277 @@ export function AppProvider({ children }) {
   }, [countDiariesUsingVariety, showToast]);
 
   // ---- дневники ----
-  const adminUpdateDiary = useCallback((id, patch) => {
-    setDiaries((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-    showToast('Дневник обновлён', 'success');
+  /**
+   * adminUpdateDiary(id, patch) — patch в тех же camelCase-полях, что
+   * возвращает diaryRowToJs (title, desc, stage, location, medium,
+   * varietyId, coverPhoto, reportInterval, + необязательный isPrivate).
+   */
+  const adminUpdateDiary = useCallback(async (id, patch) => {
+    const { data: d, error } = await updateDiaryRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить дневник');
+      return { ok: false };
+    }
+    setDiaries((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, coverPhoto: d ? d.coverPhoto : x.coverPhoto } : x)));
+    const photoDropped = patch.coverPhoto !== undefined && !!patch.coverPhoto && d && !d.coverPhoto;
+    showToast(photoDropped ? 'Дневник обновлён, но фото не загрузилось — попробуй файл поменьше' : 'Дневник обновлён', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteWeekReport = useCallback((diaryId, weekN) => {
+  /**
+   * adminDeleteWeekReport(diaryId, weekN) — сигнатура НЕ меняется (чтобы не
+   * трогать AdminDiaries.jsx, см. Этап 3), но раньше weekN использовался как
+   * ключ прямо в setState. Теперь сначала находим по нему НАСТОЯЩИЙ id
+   * строки diary_reports (см. правку diaryReportRowToJs в mappers.js —
+   * теперь week-объекты несут id), и реально удаляем именно эту строку из БД.
+   *
+   * ⚠️ Это сработает, только если diary.weeks в state — ПОЛНЫЙ список
+   * (из diaryRowToJs/getDiaryById, где .n — настоящий report_number). Если
+   * AdminDiaries.jsx показывает список отчётов из "облегчённого" списка
+   * diaryListRowToJs — там .n всегда null (см. комментарий в мапере), и
+   * поиск ниже ничего не найдёт. Если увидишь тост "Не удалось найти отчёт"
+   * — это сигнал, что экран админки дневника должен сначала дёрнуть
+   * loadFullDiary(diaryId), прежде чем показывать список отчётов на удаление.
+   */
+  const adminDeleteWeekReport = useCallback(async (diaryId, weekN) => {
+    const diary = diaries.find((d) => d.id === diaryId);
+    const report = diary?.weeks?.find((w) => w.n === weekN);
+    if (!report || !report.id) {
+      showToast('Не удалось найти отчёт для удаления (дневник не полностью загружен?)');
+      return { ok: false };
+    }
+    const { error } = await deleteWeekReportRequest(report.id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить отчёт');
+      return { ok: false };
+    }
     setDiaries((prev) => prev.map((d) => (d.id === diaryId ? { ...d, weeks: d.weeks.filter((w) => w.n !== weekN) } : d)));
     showToast('Отчёт удалён', 'success');
-  }, [showToast]);
+    return { ok: true };
+  }, [diaries, showToast]);
 
-  const adminDeleteDiary = useCallback((id) => {
+  const adminDeleteDiary = useCallback(async (id) => {
     const target = diaries.find((d) => d.id === id);
+    const { error } = await deleteDiaryRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить дневник');
+      return { ok: false };
+    }
     if (target) {
       setGrowers((prev) => prev.map((g) => (g.id === target.growerId ? { ...g, diaries: Math.max(0, g.diaries - 1) } : g)));
     }
     setDiaries((prev) => prev.filter((d) => d.id !== id));
     showToast('Дневник удалён', 'success');
+    return { ok: true };
   }, [diaries, showToast]);
 
   // ---- пользователи ----
-  const adminSetGrowerRole = useCallback((growerId, role) => {
-    setGrowers((prev) => prev.map((g) => (g.id === growerId ? { ...g, role } : g)));
+  // ⚠️ adminUpdateGrowerRequest (growerService.adminUpdateGrower) пишет в
+  // profiles.role/banned/deleted — эти поля защищены триггером
+  // 0010_protect_profile_role.sql, определение которого мне не приложили
+  // (см. диагностику в ответе). Если ниже придёт ошибка/0 обновлённых
+  // строк на смене роли или бана — это, вероятнее всего, триггер, а не
+  // баг в этом коде.
+  const adminSetGrowerRole = useCallback(async (growerId, role) => {
+    const { data: g, error } = await adminUpdateGrowerRequest(growerId, { role });
+    if (error) {
+      showToast(error.message || 'Не удалось изменить роль');
+      return { ok: false };
+    }
+    setGrowers((prev) => prev.map((x) => (x.id === growerId ? { ...x, role: g ? g.role : role } : x)));
     showToast(role === 'admin' ? 'Назначен администратором' : 'Права администратора сняты', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminSetGrowerBanned = useCallback((growerId, banned) => {
-    setGrowers((prev) => prev.map((g) => (g.id === growerId ? { ...g, banned } : g)));
+  const adminSetGrowerBanned = useCallback(async (growerId, banned) => {
+    const { data: g, error } = await adminUpdateGrowerRequest(growerId, { banned });
+    if (error) {
+      showToast(error.message || 'Не удалось изменить бан');
+      return { ok: false };
+    }
+    setGrowers((prev) => prev.map((x) => (x.id === growerId ? { ...x, banned: g ? g.banned : banned } : x)));
     showToast(banned ? 'Гровер забанен' : 'Гровер разбанен', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  /** Мягкое удаление — сохраняем данные (дневники/рецепты и т.п.), просто помечаем `deleted`. */
-  const adminSetGrowerDeleted = useCallback((growerId, deleted) => {
-    setGrowers((prev) => prev.map((g) => (g.id === growerId ? { ...g, deleted } : g)));
+  /**
+   * Мягкое удаление — сохраняем данные (дневники/рецепты и т.п.), просто
+   * помечаем `deleted`. Оставлена как есть (рабочая функция), но
+   * AdminUsers.jsx больше её не вызывает — кнопка "Удалить" в админке
+   * теперь ведёт на adminDeleteGrower (жёсткое удаление) ниже. Если нигде
+   * в проекте эта функция больше не используется — можно убрать отдельным
+   * шагом, я специально не удаляю рабочий код, который явно не просили убрать.
+   */
+  const adminSetGrowerDeleted = useCallback(async (growerId, deleted) => {
+    const { data: g, error } = await adminUpdateGrowerRequest(growerId, { deleted });
+    if (error) {
+      showToast(error.message || 'Не удалось изменить статус удаления');
+      return { ok: false };
+    }
+    setGrowers((prev) => prev.map((x) => (x.id === growerId ? { ...x, deleted: g ? g.deleted : deleted } : x)));
     showToast(deleted ? 'Гровер помечен как удалённый' : 'Гровер восстановлен', 'success');
+    return { ok: true };
+  }, [showToast]);
+
+  /**
+   * adminDeleteGrower(growerId) — фикс: жёсткое удаление вместо
+   * soft-delete. Подтверждение ("это необратимо") спрашивает UI
+   * (AdminConfirmDialog в AdminUsers.jsx) ДО вызова этой функции — сама
+   * функция ничего не подтверждает, просто удаляет.
+   */
+  const adminDeleteGrower = useCallback(async (growerId) => {
+    const { error } = await adminDeleteGrowerRequest(growerId);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить гровера');
+      return { ok: false };
+    }
+    setGrowers((prev) => prev.filter((g) => g.id !== growerId));
+    showToast('Гровер удалён', 'success');
+    return { ok: true };
   }, [showToast]);
 
   // ---- рецепты ----
+  // growerId = currentUser.growerId (auth.uid() залогиненного админа) — не
+  // строка 'admin', как было в моке: RLS на recipes.grower_id ждёт настоящий uuid.
   const adminAddRecipe = useCallback(async (formData) => {
-    const { data: r, error } = await createRecipeFromForm({ ...formData, growerId: 'admin' });
+    const { data: r, error } = await insertRecipeFromAdmin({ ...formData, growerId: currentUser?.growerId });
     if (error) {
       showToast(error.message || 'Не удалось создать рецепт');
       return null;
     }
-    const withHidden = { ...r, hidden: false };
-    setRecipes((prev) => [withHidden, ...prev]);
+    setRecipes((prev) => [r, ...prev]);
     showToast(`Рецепт «${r.title}» создан`, 'success');
-    return withHidden;
-  }, [showToast]);
+    return r;
+  }, [currentUser, showToast]);
 
-  const adminUpdateRecipe = useCallback((id, patch) => {
-    setRecipes((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const adminUpdateRecipe = useCallback(async (id, patch) => {
+    const { data: r, error } = await updateRecipeRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить рецепт');
+      return { ok: false };
+    }
+    setRecipes((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: r ? r.photo : x.photo } : x)));
     showToast('Рецепт обновлён', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteRecipe = useCallback((id) => {
+  const adminDeleteRecipe = useCallback(async (id) => {
+    const { error } = await deleteRecipeRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить рецепт');
+      return { ok: false };
+    }
     setRecipes((prev) => prev.filter((r) => r.id !== id));
     showToast('Рецепт удалён', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminToggleRecipeHidden = useCallback((id) => {
-    setRecipes((prev) => prev.map((r) => (r.id === id ? { ...r, hidden: !r.hidden } : r)));
-  }, []);
+  const adminToggleRecipeHidden = useCallback(async (id) => {
+    const current = recipes.find((r) => r.id === id);
+    if (!current) return { ok: false };
+    const { data: r, error } = await updateRecipeRequest(id, { hidden: !current.hidden });
+    if (error) {
+      showToast(error.message || 'Не удалось изменить видимость рецепта');
+      return { ok: false };
+    }
+    setRecipes((prev) => prev.map((x) => (x.id === id ? { ...x, hidden: r ? r.hidden : !current.hidden } : x)));
+    return { ok: true };
+  }, [recipes, showToast]);
 
   // ---- блог ----
   const adminAddBlogPost = useCallback(async (formData) => {
-    const { data: p, error } = await createPostFromForm({ ...formData, growerId: 'admin' });
+    const { data: p, error } = await insertBlogPostFromAdmin({ ...formData, growerId: currentUser?.growerId });
     if (error) {
       showToast(error.message || 'Не удалось опубликовать статью');
       return null;
     }
-    const published = { ...p, status: 'approved' };
-    setBlogPosts((prev) => [published, ...prev]);
+    setBlogPosts((prev) => [p, ...prev]);
     showToast(`Статья «${p.title}» опубликована`, 'success');
-    return published;
-  }, [showToast]);
+    return p;
+  }, [currentUser, showToast]);
 
-  const adminUpdateBlogPost = useCallback((id, patch) => {
-    setBlogPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  const adminUpdateBlogPost = useCallback(async (id, patch) => {
+    const { data: p, error } = await updateBlogPostRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить статью');
+      return { ok: false };
+    }
+    setBlogPosts((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: p ? p.photo : x.photo } : x)));
     showToast('Статья обновлена', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteBlogPost = useCallback((id) => {
+  const adminDeleteBlogPost = useCallback(async (id) => {
+    const { error } = await deleteBlogPostRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить статью');
+      return { ok: false };
+    }
     setBlogPosts((prev) => prev.filter((p) => p.id !== id));
     showToast('Статья удалена', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminModerateBlogPost = useCallback((id, decision, reason) => {
-    setBlogPosts((prev) => prev.map((p) => (p.id === id ? {
-      ...p,
-      status: decision,
-      rejectReason: decision === 'rejected' ? (reason || '') : ''
-    } : p)));
+  const adminModerateBlogPost = useCallback(async (id, decision, reason) => {
+    const { data: p, error } = await moderateBlogPostRequest(id, decision, reason);
+    if (error) {
+      showToast(error.message || 'Не удалось изменить статус статьи');
+      return { ok: false };
+    }
+    setBlogPosts((prev) => prev.map((x) => (x.id === id ? {
+      ...x,
+      status: p ? p.status : decision,
+      rejectReason: p ? p.rejectReason : (decision === 'rejected' ? (reason || '') : '')
+    } : x)));
     showToast(decision === 'approved' ? 'Статья одобрена' : 'Статья отклонена', 'success');
+    return { ok: true };
   }, [showToast]);
 
   // ---- вопросы ----
-  const adminUpdateQuestion = useCallback((id, patch) => {
-    setQuestions((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  const adminUpdateQuestion = useCallback(async (id, patch) => {
+    const { data: q, error } = await updateQuestionRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить вопрос');
+      return { ok: false };
+    }
+    setQuestions((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: q ? q.photo : x.photo } : x)));
     showToast('Вопрос обновлён', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteQuestion = useCallback((id) => {
+  const adminDeleteQuestion = useCallback(async (id) => {
+    const { error } = await deleteQuestionRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить вопрос');
+      return { ok: false };
+    }
     setQuestions((prev) => prev.filter((q) => q.id !== id));
     showToast('Вопрос удалён', 'success');
+    return { ok: true };
   }, [showToast]);
 
+  /**
+   * adminAnswerQuestion — раньше createAnswer({ author: 'Администратор', text })
+   * писал строку "Администратор" ПРЯМО в БД как author. Теперь insertAnswer
+   * (уже реальный, использует его и обычный addAnswer) пишет author_id =
+   * auth.uid() админа по-настоящему, а подпись "Администратор" накладываем
+   * только в локальном state — для читателей вопроса выглядит как раньше,
+   * но в БД теперь честный uuid, а не текстовая заглушка.
+   */
   const adminAnswerQuestion = useCallback(async (questionId, text) => {
-    const { data: answer, error } = await createAnswer({ author: 'Администратор', text });
+    if (!currentUser) {
+      showToast('Войди как администратор, чтобы ответить');
+      return;
+    }
+    const { data: answer, error } = await insertAnswer({ questionId, authorId: currentUser.growerId, text });
     if (error) {
       showToast(error.message || 'Не удалось опубликовать ответ');
       return;
     }
-    setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, answers: [...q.answers, answer], updatedAt: answer.createdAt } : q)));
+    const displayAnswer = { ...answer, author: 'Администратор' };
+    setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, answers: [...q.answers, displayAnswer], updatedAt: answer.createdAt } : q)));
     showToast('Ответ опубликован от имени администратора', 'success');
-  }, [showToast]);
+  }, [currentUser, showToast]);
 
   // ---- конкурсы ----
   /**
@@ -1640,7 +1860,19 @@ export function AppProvider({ children }) {
     return { ok: true };
   }, [showToast]);
 
-  const adminDeleteContest = useCallback((id) => {
+  /**
+   * adminDeleteContest(id) — фикс: раньше был мок (только setState), конкурс
+   * пропадал в UI, но не в БД, и возвращался после Cmd+R. Теперь сначала
+   * реальный DELETE через deleteContestRequest (с defensive-каскадом на
+   * contest_participants/contest_winners внутри contestService — см. её
+   * комментарий), и только на успехе убираем из state.
+   */
+  const adminDeleteContest = useCallback(async (id) => {
+    const { error } = await deleteContestRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить конкурс');
+      return;
+    }
     setContests((prev) => prev.filter((c) => c.id !== id));
     showToast('Конкурс удалён', 'success');
   }, [showToast]);
@@ -1692,7 +1924,7 @@ export function AppProvider({ children }) {
 
   // ---- свет ----
   const adminAddLight = useCallback(async (formData) => {
-    const { data: l, error } = await createLightFromForm(formData);
+    const { data: l, error } = await insertLightFromForm(formData);
     if (error) {
       showToast(error.message || 'Не удалось добавить лампу');
       return null;
@@ -1702,19 +1934,31 @@ export function AppProvider({ children }) {
     return l;
   }, [showToast]);
 
-  const adminUpdateLight = useCallback((id, patch) => {
-    setLights((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const adminUpdateLight = useCallback(async (id, patch) => {
+    const { data: l, error } = await updateLightRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить лампу');
+      return { ok: false };
+    }
+    setLights((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: l ? l.photo : x.photo } : x)));
     showToast('Лампа обновлена', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteLight = useCallback((id) => {
+  const adminDeleteLight = useCallback(async (id) => {
+    const { error } = await deleteLightRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить лампу');
+      return { ok: false };
+    }
     setLights((prev) => prev.filter((l) => l.id !== id));
     showToast('Лампа удалена', 'success');
+    return { ok: true };
   }, [showToast]);
 
   // ---- удобрения ----
   const adminAddNutrient = useCallback(async (formData) => {
-    const { data: n, error } = await createNutrientFromForm(formData);
+    const { data: n, error } = await insertNutrientFromForm(formData);
     if (error) {
       showToast(error.message || 'Не удалось добавить удобрение');
       return null;
@@ -1724,14 +1968,26 @@ export function AppProvider({ children }) {
     return n;
   }, [showToast]);
 
-  const adminUpdateNutrient = useCallback((id, patch) => {
-    setNutrients((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  const adminUpdateNutrient = useCallback(async (id, patch) => {
+    const { data: n, error } = await updateNutrientRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить удобрение');
+      return { ok: false };
+    }
+    setNutrients((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch, photo: n ? n.photo : x.photo } : x)));
     showToast('Удобрение обновлено', 'success');
+    return { ok: true };
   }, [showToast]);
 
-  const adminDeleteNutrient = useCallback((id) => {
+  const adminDeleteNutrient = useCallback(async (id) => {
+    const { error } = await deleteNutrientRequest(id);
+    if (error) {
+      showToast(error.message || 'Не удалось удалить удобрение');
+      return { ok: false };
+    }
     setNutrients((prev) => prev.filter((n) => n.id !== id));
     showToast('Удобрение удалено', 'success');
+    return { ok: true };
   }, [showToast]);
 
   // ---- настройки сайта ----
@@ -1806,7 +2062,7 @@ export function AppProvider({ children }) {
     addRecipe,
     toggleLikeRecipe, incrementRecipeViews, toggleSaveRecipe, savedRecipeIds,
     seedBank, addSeed, removeSeed, toggleSeedStatus,
-    addBlogPost, toggleLikeBlogPost, incrementBlogViews,
+    addBlogPost, toggleLikeBlogPost, incrementBlogViews, fetchAllBlogPosts,
     joinContest, joinedContestIds, startJoinContest, joinContestWithDiary, getContestParticipants,
     declareContestWinner, getContestWinners,
     addQuestion, addAnswer, toggleLikeQuestion, markSolved,
@@ -1814,7 +2070,7 @@ export function AppProvider({ children }) {
     // ---- админ ----
     adminAddVariety, adminUpdateVariety, adminDeleteVariety, countDiariesUsingVariety,
     adminUpdateDiary, adminDeleteWeekReport, adminDeleteDiary,
-    adminSetGrowerRole, adminSetGrowerBanned, adminSetGrowerDeleted,
+    adminSetGrowerRole, adminSetGrowerBanned, adminSetGrowerDeleted, adminDeleteGrower,
     adminAddRecipe, adminUpdateRecipe, adminDeleteRecipe, adminToggleRecipeHidden,
     adminAddBlogPost, adminUpdateBlogPost, adminDeleteBlogPost, adminModerateBlogPost,
     adminUpdateQuestion, adminDeleteQuestion, adminAnswerQuestion,

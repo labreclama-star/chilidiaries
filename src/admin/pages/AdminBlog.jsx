@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../context/AppContext.jsx';
 import Modal from '../../components/Modal.jsx';
@@ -11,7 +11,18 @@ const STATUS_LABELS = { pending: 'На модерации', approved: 'Опуб�
 
 export default function AdminBlog() {
   const navigate = useNavigate();
-  const { blogPosts, varieties, findGrowerById, adminAddBlogPost, adminUpdateBlogPost, adminDeleteBlogPost, adminModerateBlogPost } = useApp();
+  const {
+    varieties, findGrowerById, fetchAllBlogPosts,
+    adminAddBlogPost, adminUpdateBlogPost, adminDeleteBlogPost, adminModerateBlogPost
+  } = useApp();
+
+  // Фикс: useApp().blogPosts — это ТОЛЬКО status='approved' (fetchInitialPosts
+  // фильтрует его для публичной ленты /blog). Админке нужны все статьи,
+  // включая pending/rejected, иначе модерация невозможна — грузим их в
+  // собственный локальный state через fetchAllBlogPosts, отдельно от
+  // общего контекста.
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [statusFilter, setStatusFilter] = useState('pending');
   const [editing, setEditing] = useState(null);
@@ -20,9 +31,18 @@ export default function AdminBlog() {
   const [rejecting, setRejecting] = useState(null); // post being rejected
   const [rejectReason, setRejectReason] = useState('');
 
+  const loadPosts = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await fetchAllBlogPosts();
+    setLoading(false);
+    if (!error) setPosts(data || []);
+  }, [fetchAllBlogPosts]);
+
+  useEffect(() => { loadPosts(); }, [loadPosts]);
+
   const list = useMemo(() => (
-    statusFilter === 'all' ? blogPosts : blogPosts.filter((p) => p.status === statusFilter)
-  ), [blogPosts, statusFilter]);
+    statusFilter === 'all' ? posts : posts.filter((p) => p.status === statusFilter)
+  ), [posts, statusFilter]);
 
   function field(key) {
     return { value: form[key] ?? '', onChange: (e) => setForm((f) => ({ ...f, [key]: e.target.value })) };
@@ -50,24 +70,36 @@ export default function AdminBlog() {
     setEditing(null);
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const paragraphs = form.content.split('\n').map((s) => s.trim()).filter(Boolean);
     const tags = form.tags.split(',').map((s) => s.trim()).filter(Boolean);
     const payload = { title: form.title, varietyId: form.varietyId || null, tags, content: paragraphs, photo: form.photo };
     if (editing && editing.id) {
-      adminUpdateBlogPost(editing.id, { ...payload, excerpt: paragraphs[0] ? paragraphs[0].slice(0, 140) : '' });
+      await adminUpdateBlogPost(editing.id, { ...payload, excerpt: paragraphs[0] ? paragraphs[0].slice(0, 140) : '' });
     } else {
-      adminAddBlogPost(payload);
+      await adminAddBlogPost(payload);
     }
     closeModal();
+    loadPosts();
   }
 
-  function submitReject(e) {
+  async function submitReject(e) {
     e.preventDefault();
-    adminModerateBlogPost(rejecting.id, 'rejected', rejectReason);
+    await adminModerateBlogPost(rejecting.id, 'rejected', rejectReason);
     setRejecting(null);
     setRejectReason('');
+    loadPosts();
+  }
+
+  async function handleApprove(p) {
+    await adminModerateBlogPost(p.id, 'approved');
+    loadPosts();
+  }
+
+  async function handleDelete(id) {
+    await adminDeleteBlogPost(id);
+    loadPosts();
   }
 
   const columns = [
@@ -84,7 +116,7 @@ export default function AdminBlog() {
     { key: 'views', label: 'Просмотры' }
   ];
 
-  const confirming = confirmDeleteId ? blogPosts.find((p) => p.id === confirmDeleteId) : null;
+  const confirming = confirmDeleteId ? posts.find((p) => p.id === confirmDeleteId) : null;
 
   return (
     <div>
@@ -102,25 +134,29 @@ export default function AdminBlog() {
         </select>
       </div>
 
-      <AdminTable
-        columns={columns}
-        rows={list}
-        onRowClick={openEdit}
-        emptyText="Статьи не найдены"
-        renderActions={(p) => (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn btn-outline btn-sm" onClick={() => navigate(`/blog/${p.id}`)}>Открыть</button>
-            {p.status !== 'approved' && (
-              <button className="btn btn-outline btn-sm" onClick={() => adminModerateBlogPost(p.id, 'approved')}>Одобрить</button>
-            )}
-            {p.status !== 'rejected' && (
-              <button className="btn btn-outline btn-sm" onClick={() => { setRejecting(p); setRejectReason(''); }}>Отклонить</button>
-            )}
-            <button className="btn btn-outline btn-sm" onClick={() => openEdit(p)}>Изменить</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDeleteId(p.id)}>Удалить</button>
-          </div>
-        )}
-      />
+      {loading ? (
+        <p className="sub">Загрузка…</p>
+      ) : (
+        <AdminTable
+          columns={columns}
+          rows={list}
+          onRowClick={openEdit}
+          emptyText="Статьи не найдены"
+          renderActions={(p) => (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn btn-outline btn-sm" onClick={() => navigate(`/blog/${p.id}`)}>Открыть</button>
+              {p.status !== 'approved' && (
+                <button className="btn btn-outline btn-sm" onClick={() => handleApprove(p)}>Одобрить</button>
+              )}
+              {p.status !== 'rejected' && (
+                <button className="btn btn-outline btn-sm" onClick={() => { setRejecting(p); setRejectReason(''); }}>Отклонить</button>
+              )}
+              <button className="btn btn-outline btn-sm" onClick={() => openEdit(p)}>Изменить</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setConfirmDeleteId(p.id)}>Удалить</button>
+            </div>
+          )}
+        />
+      )}
 
       <Modal isOpen={!!editing} onClose={closeModal} wide>
         <h2>{editing && editing.id ? 'Редактировать статью' : 'Написать статью'}</h2>
@@ -161,7 +197,7 @@ export default function AdminBlog() {
         onClose={() => setConfirmDeleteId(null)}
         title="Удалить статью?"
         message={`Статья «${confirming?.title}» будет удалена без возможности восстановления.`}
-        onConfirm={() => confirming && adminDeleteBlogPost(confirming.id)}
+        onConfirm={() => confirming && handleDelete(confirming.id)}
       />
     </div>
   );

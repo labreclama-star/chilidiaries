@@ -8,10 +8,14 @@ import { growerScore } from '../../utils/helpers.js';
 
 export default function AdminUsers() {
   const navigate = useNavigate();
-  const { growers, diaries, currentUser, adminSetGrowerRole, adminSetGrowerBanned, adminSetGrowerDeleted } = useApp();
+  const { growers, diaries, currentUser, adminSetGrowerRole, adminSetGrowerBanned, adminDeleteGrower } = useApp();
 
   const [search, setSearch] = useState('');
-  const [confirmTarget, setConfirmTarget] = useState(null); // { grower, action: 'delete' | 'restore' }
+  // Фикс: раньше здесь было мягкое удаление ({ grower, action: 'delete' | 'restore' }),
+  // теперь удаление жёсткое (реальный DELETE из profiles) и необратимое —
+  // "восстанавливать" больше нечего, поэтому диалог хранит только гровера,
+  // которого собираются удалить.
+  const [confirmTarget, setConfirmTarget] = useState(null); // grower | null
 
   const list = useMemo(() => growers.filter((g) => (
     !search || g.name.toLowerCase().includes(search.toLowerCase())
@@ -22,7 +26,7 @@ export default function AdminUsers() {
       key: 'name', label: 'Гровер', render: (g) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Avatar name={g.name} photo={g.avatar} size={30} online={g.online} />
-          <span>{g.name}{g.deleted ? ' (удалён)' : ''}</span>
+          <span>{g.name}</span>
         </div>
       )
     },
@@ -79,9 +83,7 @@ export default function AdminUsers() {
                 </button>
               )}
               {!isSelf && (
-                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmTarget({ grower: g, action: g.deleted ? 'restore' : 'delete' })}>
-                  {g.deleted ? 'Восстановить' : 'Удалить'}
-                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmTarget(g)}>Удалить</button>
               )}
             </div>
           );
@@ -91,15 +93,11 @@ export default function AdminUsers() {
       <AdminConfirmDialog
         isOpen={!!confirmTarget}
         onClose={() => setConfirmTarget(null)}
-        title={confirmTarget?.action === 'delete' ? 'Удалить гровера?' : 'Восстановить гровера?'}
-        message={
-          confirmTarget?.action === 'delete'
-            ? `Гровер «${confirmTarget?.grower.name}» будет скрыт из публичного каталога. Его дневники, рецепты и комментарии не удаляются — это мягкое удаление, его можно отменить.`
-            : `Гровер «${confirmTarget?.grower.name}» снова появится в публичном каталоге.`
-        }
-        confirmLabel={confirmTarget?.action === 'delete' ? 'Удалить' : 'Восстановить'}
-        danger={confirmTarget?.action === 'delete'}
-        onConfirm={() => confirmTarget && adminSetGrowerDeleted(confirmTarget.grower.id, confirmTarget.action === 'delete')}
+        title="Удалить гровера?"
+        message={`Удалить гровера «${confirmTarget?.name}» без возможности восстановления? Все его дневники, отчёты и комментарии будут потеряны. Это действие нельзя отменить.`}
+        confirmLabel="Удалить"
+        danger
+        onConfirm={() => confirmTarget && adminDeleteGrower(confirmTarget.id)}
       />
     </div>
   );

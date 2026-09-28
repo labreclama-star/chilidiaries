@@ -3,7 +3,7 @@ import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
 import { growerRowToJs } from './supabase/mappers.js';
 import { photoUrlForDb } from './_photo.js';
-import { toError, PG_UNIQUE_VIOLATION } from './_dbError.js';
+import { toError, PG_UNIQUE_VIOLATION, PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 
 // Внутреннее мок-хранилище: защищённая копия сида, а не сам импортированный
 // массив (правило "никаких прямых мутаций импортированных массивов").
@@ -163,6 +163,117 @@ export async function setGrowerOnline(userId, online) {
     const { error } = await supabase.from('profiles').update({ online: !!online }).eq('id', userId);
     if (error) return fail(toError(error));
     return ok(null);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * adminUpdateGrower(id, patch) — Этап 1.6 текущего захода: UPDATE profiles
+ * ТОЛЬКО для админки (AdminUsers.jsx). В отличие от updateGrowerProfile
+ * выше (для самого пользователя, только name/bio/loc/avatar), эта функция
+ * позволяет менять ещё и role/banned/deleted — то, что защищено триггером
+ * 0010_protect_profile_role.sql на стороне БД.
+ *
+ * ⚠️ ВАЖНО — я не смог продиагностировать 0010_protect_profile_role.sql:
+ * миграция не была приложена в этом чате, а без доступа к БД я не могу
+ * прочитать её определение сам. Функция ниже написана как обычный UPDATE
+ * и СИНТАКСИЧЕСКИ корректна, но пропустит ли её триггер при смене
+ * role/banned для другого пользователя (когда меняющий — is_admin()) —
+ * не гарантирую. См. диагностику и план Б в сопроводительном тексте ответа.
+ *
+ * avatar — та же логика null/http(s)/File, что в updateGrowerProfile.
+ * .select() с теми же count-джойнами, что fetchInitialGrowers/getGrowerById
+ * — чтобы growerRowToJs получил обычные diaries/followers, а не 0 по
+ * умолчанию, и adminSetGrowerRole/Banned/Deleted в AppContext могли
+ * смёржить ответ в state без потери счётчиков.
+ */
+export async function adminUpdateGrower(id, patch = {}) {
+  try {
+    const update = {};
+    if (patch.role !== undefined) update.role = patch.role;
+    if (patch.banned !== undefined) update.banned = !!patch.banned;
+    if (patch.deleted !== undefined) update.deleted = !!patch.deleted;
+    if (patch.name !== undefined) update.name = patch.name;
+    if (patch.bio !== undefined) update.bio = patch.bio;
+    if (patch.loc !== undefined) update.loc = patch.loc;
+    if (patch.avatar !== undefined) {
+      update.avatar_url = patch.avatar ? await photoUrlForDb(patch.avatar, 'growerService') : null;
+    }
+    if (Object.keys(update).length === 0) return ok(null);
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(update)
+      .eq('id', id)
+      .select(`
+        *,
+        diaries:diaries!grower_id(count),
+        followers:follows!followed_id(count)
+      `)
+      .maybeSingle();
+    if (error) {
+      if (error.code === PG_UNIQUE_VIOLATION) return fail(new Error('Это имя уже занято'));
+      return fail(toError(error));
+    }
+    // 0 затронутых строк — либо гровер не найден, либо (вероятнее для
+    // role/banned/deleted) триггер 0010_protect_profile_role.sql отклонил
+    // изменение молча (PostgREST не превращает это в ошибку). Отсюда
+    // текст ниже с явным упоминанием триггера, а не общее "нет прав".
+    if (!data) return fail(new Error('Профиль не обновлён: не найден, либо триггер 0010_protect_profile_role.sql блокирует это изменение для админа'));
+    return ok(growerRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * adminDeleteGrower(growerId) — фикс: раньше "удаление" гровера
+ * (adminSetGrowerDeleted) было мягким — только profiles.deleted=true,
+ * строка оставалась в БД и в списке (серым, с кнопкой "Восстановить").
+ * Это жёсткий DELETE — необратимо, подтверждение спрашивает UI
+ * (AdminConfirmDialog в AdminUsers.jsx) ДО вызова этой функции.
+ *
+ * ⚠️ profiles — таблица с МНОЖЕСТВОМ входящих внешних ключей (diaries,
+ * recipes, blog_posts, questions, answers, likes, follows, comments,
+ * contest_participants, contest_winners, notifications и т.д. — это не
+ * исчерпывающий список, я его не проверял по факту). В отличие от
+ * deleteDiary/deleteContest (там дочерние таблицы были явно названы в
+ * задаче, поэтому ручной каскад для них написан) — здесь я НЕ угадываю,
+ * какие из связей CASCADE, а какие RESTRICT: при 23503 функция честно
+ * возвращает fail с понятным текстом, а не молча чистит наугад что-то,
+ * что может оказаться не тем (или не всем).
+ *
+ * Диагностика (дать пользователю выполнить в SQL Editor):
+ *   select conname, confdeltype from pg_constraint
+ *   where confrelid = 'public.profiles'::regclass;
+ * confdeltype: 'c' — CASCADE (удалится само, эта ветка не сработает),
+ * 'r'/'a' — RESTRICT/NO ACTION (заблокирует DELETE, увидишь fail отсюда),
+ * 'n' — SET NULL, 'd' — SET DEFAULT.
+ *
+ * .select('id') — как и у deleteContest, чтобы отличить "физически
+ * удалено" от "RLS молча отфильтровал 0 строк".
+ */
+export async function adminDeleteGrower(growerId) {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', growerId)
+      .select('id');
+    if (error) {
+      if (error.code === PG_FOREIGN_KEY_VIOLATION) {
+        return fail(new Error(
+          'Есть связанные данные (дневники, статьи, комментарии и т.п.) — удалить невозможно без ручной очистки. ' +
+          'Нужна миграция с ON DELETE CASCADE на profiles, либо сначала вручную удалить дочерние записи.'
+        ));
+      }
+      return fail(toError(error));
+    }
+    if (!data || data.length === 0) {
+      return fail(new Error('Гровер не удалён: не найден или нет прав (RLS)'));
+    }
+    return ok({ id: growerId });
   } catch (e) {
     return fail(e);
   }

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import Modal from './Modal.jsx';
+import Spinner from './Spinner.jsx';
 import { useApp } from '../context/AppContext.jsx';
 import { QUESTION_STAGES, QUESTION_TOPICS } from '../utils/helpers.js';
 
@@ -11,6 +12,7 @@ export default function AskQuestionModal() {
   const navigate = useNavigate();
   const { activeModal, closeModal, currentUser, openModal, diaries, addQuestion, showToast } = useApp();
   const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
 
   const isOpen = activeModal === 'askQuestion';
   const myDiaries = currentUser ? diaries.filter((d) => d.growerId === currentUser.growerId) : [];
@@ -44,16 +46,21 @@ export default function AskQuestionModal() {
       showToast('Опиши проблему хотя бы в паре слов');
       return;
     }
-    const q = await addQuestion({
-      text,
-      photo: form.photo,
-      diaryId: form.diaryId || null,
-      stage: form.stage || null,
-      topic: form.topic || null
-    });
-    setForm(emptyForm());
-    closeModal();
-    if (q) navigate(`/questions/${q.id}`);
+    setSubmitting(true);
+    try {
+      const q = await addQuestion({
+        text,
+        photo: form.photo,
+        diaryId: form.diaryId || null,
+        stage: form.stage || null,
+        topic: form.topic || null
+      });
+      setForm(emptyForm());
+      closeModal();
+      if (q) navigate(`/questions/${q.id}`);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -100,7 +107,9 @@ export default function AskQuestionModal() {
             <img src={form.photo} alt="" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: '12px 4px 12px 4px' }} />
           </div>
         )}
-        <button type="submit" className="btn btn-primary btn-block">Опубликовать вопрос</button>
+        <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+          {submitting ? (<><Spinner size={14} /> Публикую…</>) : 'Опубликовать вопрос'}
+        </button>
       </form>
     </Modal>
   );

@@ -121,24 +121,75 @@ export async function incrementRecipeViewsRpc(recipeId) {
   }
 }
 
-// Write-функция — по правилам Этапа 3 не трогаем, остаётся на моке.
-export async function createRecipeFromForm({ title, category, varietyId, desc, ingredients, steps, growerId, photo }) {
+/**
+ * updateRecipe(id, patch) — Этап 1.2 текущего захода: реальный UPDATE
+ * recipes для админки (AdminRecipes.jsx). Partial-update — трогаем
+ * только присланные поля. Если patch.photo === undefined — колонку
+ * photo_url вообще не трогаем (в отличие от patch.photo === null —
+ * это явное "убрать фото", photoUrlForDb(null, ...) вернёт null).
+ */
+export async function updateRecipe(id, patch) {
   try {
-    const recipe = {
-      id: 'r_' + Date.now(),
-      title,
-      category,
-      growerId,
-      varietyId: varietyId || null,
-      desc: desc || 'Рецепт от сообщества ChiliDiaries.',
-      ingredients,
-      steps,
-      photo: photo || null,
-      likes: 0,
-      liked: false,
-      views: 0
-    };
-    return ok(recipe);
+    const row = {};
+    if (patch.title !== undefined) row.title = patch.title;
+    if (patch.category !== undefined) row.category = patch.category;
+    if (patch.varietyId !== undefined) row.variety_id = patch.varietyId || null;
+    if (patch.desc !== undefined) row.description = patch.desc;
+    if (patch.ingredients !== undefined) row.ingredients = patch.ingredients;
+    if (patch.steps !== undefined) row.steps = patch.steps;
+    if (patch.photo !== undefined) row.photo_url = await photoUrlForDb(patch.photo, 'recipeService');
+    if (patch.hidden !== undefined) row.hidden = !!patch.hidden;
+
+    const { data, error } = await supabase
+      .from('recipes')
+      .update(row)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) return fail(error);
+    if (!data) return fail(new Error('Рецепт не найден или нет прав'));
+    return ok(recipeRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** deleteRecipe(id) — Этап 1.2. У recipes нет известных дочерних таблиц с FK (лайки/сохранения — по recipe_id, но это не блокирующие связи в этой схеме), простой DELETE. */
+export async function deleteRecipe(id) {
+  try {
+    const { error } = await supabase.from('recipes').delete().eq('id', id);
+    if (error) return fail(error);
+    return ok({ id });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * insertRecipeFromAdmin(data) — Этап 1.2: заменяет старый мок
+ * createRecipeFromForm. Реальный INSERT, grower_id = growerId, который
+ * передаёт AppContext (currentUser.growerId залогиненного админа —
+ * auth.uid()), hidden всегда false (админ публикует сразу видимым).
+ */
+export async function insertRecipeFromAdmin({ title, category, varietyId, desc, ingredients, steps, photo, growerId }) {
+  try {
+    const { data, error } = await supabase
+      .from('recipes')
+      .insert({
+        title,
+        category,
+        variety_id: varietyId || null,
+        grower_id: growerId,
+        description: desc || '',
+        ingredients: ingredients || [],
+        steps: steps || [],
+        photo_url: await photoUrlForDb(photo, 'recipeService'),
+        hidden: false
+      })
+      .select('*')
+      .single();
+    if (error) return fail(error);
+    return ok(recipeRowToJs(data));
   } catch (e) {
     return fail(e);
   }

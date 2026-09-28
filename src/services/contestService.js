@@ -1,7 +1,7 @@
 import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
 import { contestRowToJs, participantRowToJs } from './supabase/mappers.js';
-import { toError, PG_UNIQUE_VIOLATION } from './_dbError.js';
+import { toError, PG_UNIQUE_VIOLATION, PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 import { photoUrlForDb } from './_photo.js';
 
 // Этап "Задача 3": мок-фолбэк (_store/store() на data/contests.js) убран —
@@ -396,6 +396,70 @@ export async function insertContest({ title, desc, fullDesc, prize, startDate, d
       .single();
     if (error) return fail(toError(error));
     return ok(contestRowToJs(data));
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteContest(contestId) — фикс точечного бага: adminDeleteContest в
+ * AppContext был мок-функцией (только setState, никакого DELETE в БД) —
+ * конкурс визуально пропадал, но после Cmd+R возвращался. Остальные
+ * admin*Delete* уже реальные (см. отчёт "дочистки админки"); конкурсы туда
+ * тогда не попали по прямой просьбе не трогать contestService.
+ *
+ * Defensive-каскад — тот же паттерн, что diaryService.deleteDiary /
+ * questionService.deleteQuestion: пробуем простой DELETE; если БД отвечает
+ * 23503 (FK RESTRICT/NO ACTION без CASCADE — есть участники в
+ * contest_participants и/или объявленный победитель в contest_winners),
+ * вручную удаляем обе дочерние таблицы по contest_id и повторяем DELETE
+ * самого конкурса. Если в схеме уже есть настоящий ON DELETE CASCADE — до
+ * этой ветки дело не доходит, первый DELETE отрабатывает сам.
+ *
+ * .select('id') И на первой попытке, И на повторной после каскада — чтобы
+ * отличить "физически удалено" от "RLS молча отфильтровал 0 строк"
+ * (DELETE без ошибки, но с пустым data, — это не то же самое, что успех).
+ */
+export async function deleteContest(contestId) {
+  try {
+    const { data, error } = await supabase
+      .from('contests')
+      .delete()
+      .eq('id', contestId)
+      .select('id');
+
+    if (error) {
+      if (error.code === PG_FOREIGN_KEY_VIOLATION) {
+        const { error: participantsError } = await supabase
+          .from('contest_participants')
+          .delete()
+          .eq('contest_id', contestId);
+        if (participantsError) return fail(toError(participantsError));
+
+        const { error: winnersError } = await supabase
+          .from('contest_winners')
+          .delete()
+          .eq('contest_id', contestId);
+        if (winnersError) return fail(toError(winnersError));
+
+        const { data: retryData, error: retryError } = await supabase
+          .from('contests')
+          .delete()
+          .eq('id', contestId)
+          .select('id');
+        if (retryError) return fail(toError(retryError));
+        if (!retryData || retryData.length === 0) {
+          return fail(new Error('Конкурс не удалён: не найден или нет прав (RLS)'));
+        }
+        return ok({ id: contestId });
+      }
+      return fail(toError(error));
+    }
+
+    if (!data || data.length === 0) {
+      return fail(new Error('Конкурс не удалён: не найден или нет прав (RLS)'));
+    }
+    return ok({ id: contestId });
   } catch (e) {
     return fail(e);
   }

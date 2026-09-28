@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import Modal from './Modal.jsx';
+import Spinner from './Spinner.jsx';
 import { useApp } from '../context/AppContext.jsx';
 
 const emptyForm = () => ({ title: '', category: 'Соус', varietyId: '', desc: '', ingredients: '', steps: '', photo: null });
@@ -89,12 +90,7 @@ export default function AddRecipeModal() {
         <button type="submit" className="btn btn-primary btn-block" disabled={loading} aria-busy={loading}>
           {loading ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-              {/* Спиннер на SMIL-анимации SVG: не требует CSS-классов и @keyframes */}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
-                <path d="M12 3a9 9 0 0 1 9 9">
-                  <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
-                </path>
-              </svg>
+              <Spinner size={16} />
               {form.photo ? 'Обработка фото…' : 'Публикация…'}
             </span>
           ) : 'Опубликовать рецепт'}
