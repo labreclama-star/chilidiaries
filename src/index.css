@@ -1659,3 +1659,33 @@ footer{border-top:1px solid var(--scorch-line-soft);padding:56px 0 30px;margin-t
   .app-main > footer .footer-brand p { display: none; }
   .app-main > footer .footer-bottom { padding-top: 14px; }
 }
+
+
+/* ============ MOBILE FIX 3 (2026-09-28): лайтбокс и кнопка «Назад» ============ */
+
+/* Лайтбокс: палец не должен прокручивать страницу под оверлеем — иначе свайп вниз
+   не доходит до нашего обработчика. */
+.lightbox-overlay { touch-action: none; }
+/* Кнопка «назад» на десктопе не нужна (там крестик справа) */
+.lightbox-back { display: none; }
+
+@media (max-width: 768px) {
+  /* Вверху слева — привычная стрелка «назад» с учётом выреза iPhone; крестик справа прячем */
+  .lightbox-back {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute;
+    top: calc(12px + env(safe-area-inset-top)); left: 12px;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(255,255,255,.14); color: var(--white);
+    z-index: 2;
+  }
+  .lightbox-back svg { width: 24px; height: 24px; }
+  .lightbox-close { display: none; }
+  .lightbox-image { max-height: 80vh; }
+
+  /* Кнопка «Назад» на страницах: на ≤480px правило .wrap{padding:0 14px} стоит ниже
+     .back-nav{padding-top:18px} и обнуляло верхний отступ — кнопка липла к шапке.
+     .wrap.back-nav имеет более высокую специфичность, поэтому отступ теперь держится. */
+  .back-nav,
+  .wrap.back-nav { padding-top: 16px; }
+}
