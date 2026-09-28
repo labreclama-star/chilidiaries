@@ -19,7 +19,7 @@ export default function QuestionDetail() {
 
   if (!q) {
     return (
-      <div className="wrap" style={{ padding: '60px 0', maxWidth: 760 }}>
+      <div className="wrap" style={{ paddingTop: 60, paddingBottom: 60, maxWidth: 760 }}>
         <div className="empty-state">
           <p>Вопрос не найден.</p>
           <Link to="/questions" className="btn btn-outline" style={{ marginTop: 16 }}>← Все вопросы</Link>
@@ -48,7 +48,7 @@ export default function QuestionDetail() {
   const showAnswers = tab === 'all' || tab === 'comments';
 
   return (
-    <div className="wrap" style={{ padding: '36px 0 70px', maxWidth: 760 }}>
+    <div className="wrap" style={{ paddingTop: 36, paddingBottom: 70, maxWidth: 760 }}>
       <div className="tab-row">
         <button className={'tab-btn' + (tab === 'all' ? ' active' : '')} onClick={() => setTab('all')}>Все</button>
         <button className={'tab-btn' + (tab === 'problem' ? ' active' : '')} onClick={() => setTab('problem')}>Описание проблемы</button>
