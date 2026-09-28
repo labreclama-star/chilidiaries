@@ -6,10 +6,10 @@
 // короткий публичный URL. Base64 в строки таблиц и в JWT больше не попадает.
 //
 // Перед загрузкой картинка сжимается в браузере (browser-image-compression):
-// до 1600 px по длинной стороне и ~0.5 МБ, формат на выходе — WebP (весит
-// на 40-50% меньше JPEG при том же качестве, поддерживается всеми
-// современными браузерами; альфа-канал PNG сохраняется). Так экономим
-// место и исходящий трафик Supabase, а форма грузится быстрее.
+// до 1600 px по длинной стороне и ~0.3 МБ. Формат на выходе — WebP там, где
+// браузер умеет его кодировать, и JPEG там, где не умеет (Safari/iPhone
+// WebP в canvas не кодирует — молча отдаёт огромный PNG, см. canEncodeWebp).
+// Так экономим место и исходящий трафик Supabase, а форма грузится быстрее.
 //
 // Что умеет принимать uploadPhoto:
 //   null / undefined / ''      → { url: null,  error: null }
@@ -18,7 +18,8 @@
 //   'data:image/...;base64,…'  → конвертируем в Blob, сжимаем, грузим
 //   'blob:...' (createObjectURL) → скачиваем Blob, сжимаем, грузим
 //   SVG / GIF                  → грузим как есть (см. SKIP_COMPRESS_TYPES)
-//   файл < 500 КБ              → грузим как есть, без сжатия (SKIP_COMPRESS_BELOW_BYTES)
+//   файл < 200 КБ              → грузим как есть, без сжатия (SKIP_COMPRESS_BELOW_BYTES)
+//   HEIC/HEIF                  → сжимаем через canvas (Safari его декодирует); не вышло — как есть + toast
 //   что-то ещё                 → { url: null, error }
 //   файл > 5 МБ                → { url: null, error: 'Файл больше 5 МБ' }
 //
@@ -35,42 +36,32 @@ const BUCKET = 'photos';
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const TOO_BIG_MESSAGE = 'Файл больше 5 МБ';
 
-// Параметры сжатия перед загрузкой. fileType принудительно 'image/webp':
-// весит на 40-50% меньше JPEG при том же качестве (PNG/GIF-без-анимации/
-// исходный WebP тоже приводятся к нему); расширение файла в Storage
-// (extForMime, см. ниже) берёт .webp автоматически по итоговому MIME.
-// initialQuality 0.75 — на глаз незаметно, но вес падает ещё на 15-20%
-// сверху экономии от смены формата.
+// Параметры сжатия перед загрузкой.
 // maxSizeMB — цель, а не гарантия: библиотека снижает качество итерациями,
 // начиная с initialQuality, пока не уложится (или не кончатся попытки).
-// useWebWorker: сжатие не блокирует интерфейс; если воркер не запустился
-// (например, CSP не пускает скрипт с CDN), библиотека сама сжимает в
-// основном потоке.
-//
-// maxSizeMB 0.5, maxWidthOrHeight 1600, useWebWorker true — оставлены как
-// были (после диагностики медленной публикации).
-// Заметка: воркер библиотека по умолчанию подгружает с CDN jsdelivr — если
-// сжатие крупных фото снова станет долгим (тайминг '[photo …] compress'),
-// проверь именно его: либо useWebWorker:false, либо положи скрипт библиотеки
-// в public/ и укажи его в опции libURL (тогда воркер не зависит от CDN).
-const COMPRESS_OPTIONS = {
-  maxSizeMB: 0.5,
-  maxWidthOrHeight: 1600,
-  useWebWorker: true,
-  initialQuality: 0.75,
-  fileType: 'image/webp',
-};
+// useWebWorker: false — сжимаем в основном потоке. Воркер библиотека грузит с
+// CDN jsdelivr, который в РФ бывает недоступен; для одного фото основной поток
+// справляется, зато от сети ничего не зависит.
+// fileType выбирается в getCompressOptions() по факту: WebP, если браузер умеет
+// его кодировать, иначе JPEG.
+const TARGET_MB = 0.3;
+const MAX_SIDE = 1600;
+const LIB_QUALITY = 0.65;
+const CANVAS_QUALITY = 0.7; // запасной путь без библиотеки
 
 // Файлы меньше этого порога не сжимаем вовсе: сжимать нечего, а библиотека
 // тратила на такой файл (~30 КБ) по 5-6 секунд впустую. Грузим как есть.
-// Граница строгая: ровно 500 КБ и больше — уже идут в сжатие.
-const SKIP_COMPRESS_BELOW_BYTES = 500 * 1024;
+// Граница строгая: ровно 200 КБ и больше — уже идут в сжатие.
+const SKIP_COMPRESS_BELOW_BYTES = 200 * 1024;
 
 const mb = (bytes) => (bytes / 1024 / 1024).toFixed(2) + ' МБ';
 
 // Эти форматы не сжимаем: у GIF пропала бы анимация, SVG — векторная графика,
 // растеризовать её в JPEG незачем. Грузим как есть (лимит 5 МБ действует).
 const SKIP_COMPRESS_TYPES = new Set(['image/gif', 'image/svg+xml']);
+
+const HEIC_MESSAGE =
+  'Формат HEIC не сжимается в браузере, загружаем как есть. Сними в JPEG, если хочешь меньше вес';
 
 const EXT_BY_MIME = {
   'image/jpeg': 'jpg',
@@ -79,36 +70,169 @@ const EXT_BY_MIME = {
   'image/gif': 'gif',
   'image/avif': 'avif',
   'image/heic': 'heic',
+  'image/heif': 'heic',
   'image/svg+xml': 'svg',
 };
 
-// Расширение для имени файла в Storage берём из MIME-типа итогового Blob:
-// после сжатия это всегда image/webp → .webp (кроме GIF/SVG — они не
-// сжимаются и остаются .gif/.svg, см. SKIP_COMPRESS_TYPES). Исходное имя
-// файла в путь больше не попадает (кириллица/пробелы в ключе дают
+// Расширение для имени файла в Storage берём из MIME-типа итогового Blob
+// (.webp или .jpg после сжатия; GIF/SVG не сжимаются и остаются как есть).
+// Исходное имя файла в путь не попадает (кириллица/пробелы в ключе дают
 // "Invalid key"), путь состоит только из времени и случайной строки.
 function extForMime(mime) {
   return EXT_BY_MIME[mime] || 'bin';
 }
 
-// Сжимает Blob в WebP. Библиотека подключается динамическим import(), чтобы не
-// попадать в основной бандл: скачается при первой загрузке фото.
-// Если сжатие упало (битый файл, формат, который браузер не умеет декодировать),
-// возвращаем исходный Blob и пишем предупреждение — загрузку не блокируем,
-// лимит 5 МБ к этому моменту уже проверен по исходнику.
+// Сообщение для toast'а. Сервисы не имеют доступа к showToast (компоненты ходят
+// в сервисы только через useApp), поэтому шлём событие на window, а AppContext
+// его слушает и показывает toast.
+function reportPhoto(message) {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('cd:photo-report', { detail: { message } }));
+    }
+  } catch {
+    // toast — это только подсказка, на загрузку он влиять не должен
+  }
+}
+
+// Умеет ли браузер кодировать WebP в canvas. Safari/iPhone НЕ умеет: на запрос
+// toBlob('image/webp') он молча отдаёт PNG (огромный, качество не влияет) —
+// вероятная причина «1-2 МБ вместо 0.3». Проверяем один раз и запоминаем.
+let _webpOk = null;
+function canEncodeWebp() {
+  if (_webpOk === null) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 1;
+      _webpOk = c.toDataURL('image/webp').startsWith('data:image/webp');
+    } catch {
+      _webpOk = false;
+    }
+  }
+  return _webpOk;
+}
+const outputType = () => (canEncodeWebp() ? 'image/webp' : 'image/jpeg');
+
+function getCompressOptions() {
+  return {
+    maxSizeMB: TARGET_MB,
+    maxWidthOrHeight: MAX_SIDE,
+    useWebWorker: false,
+    initialQuality: LIB_QUALITY,
+    fileType: outputType(),
+  };
+}
+
+// Определяет настоящий формат по первым байтам (а не по blob.type, который
+// может врать: библиотека подписывает результат тем fileType, что просили).
+async function sniffMime(blob) {
+  try {
+    const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg';
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+    if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+      const brand = String.fromCharCode(b[8], b[9], b[10], b[11]);
+      if (brand === 'avif') return 'image/avif';
+      return 'image/heic'; // heic, heix, mif1, hevc… — семейство HEIF
+    }
+  } catch {
+    // не смогли прочитать — вернём null
+  }
+  return null;
+}
+
+function isHeic(blob, name, realType) {
+  const t = (blob.type || '').toLowerCase();
+  return (
+    t === 'image/heic' || t === 'image/heif' ||
+    /\.(heic|heif)$/i.test(name || '') ||
+    realType === 'image/heic'
+  );
+}
+
+// Сжатие «вручную» через canvas, без библиотеки: нарисовали картинку в canvas
+// уменьшенной и сохранили с quality 0.7. Safari умеет декодировать даже HEIC,
+// поэтому этот путь годится и для него. Бросает Error, если картинку не
+// удалось декодировать.
+async function canvasCompress(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error('Браузер не смог декодировать изображение'));
+      im.src = url;
+    });
+    const w0 = img.naturalWidth;
+    const h0 = img.naturalHeight;
+    if (!w0 || !h0) throw new Error('У изображения нулевой размер');
+    const scale = Math.min(1, MAX_SIDE / Math.max(w0, h0));
+    const w = Math.max(1, Math.round(w0 * scale));
+    const h = Math.max(1, Math.round(h0 * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    // Белая подложка: JPEG не хранит прозрачность, иначе PNG получит чёрный фон
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const type = outputType();
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, type, CANVAS_QUALITY));
+    if (!out) throw new Error('canvas.toBlob вернул null');
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Приводит тип Blob в соответствие с реальным содержимым (см. sniffMime).
+async function withRealType(blob) {
+  const real = await sniffMime(blob);
+  if (real && real !== blob.type) return new Blob([blob], { type: real });
+  return blob;
+}
+
+// Сжимает Blob. Возвращает { blob, note }: note — текст для toast'а, если
+// случилось что-то, о чём пользователю надо сказать (сейчас — только HEIC).
+// Порядок: HEIC → сразу canvas; остальное → библиотека, а если она упала или
+// не дала выигрыша (>= оригинала) — canvas. Ничего не вышло → оригинал, загрузку
+// не блокируем (лимит 5 МБ к этому моменту уже проверен по исходнику).
+// Библиотека подключается динамическим import(), чтобы не попадать в основной
+// бандл: скачается при первой загрузке фото.
 // tag — короткий id вызова: console.time требует уникальную метку, а фото могут
 // грузиться параллельно (несколько фото в отчёте).
-async function compressBlob(blob, tag) {
-  if (SKIP_COMPRESS_TYPES.has(blob.type)) return blob;
-  // Маленький файл — отдаём как есть, ДО загрузки библиотеки: не тратим время
-  // ни на import(), ни на сжатие. Остаётся только upload.
+async function compressBlob(blob, tag, name, realType) {
+  if (SKIP_COMPRESS_TYPES.has(blob.type)) {
+    console.log(`[photo ${tag}] сжатие пропущено: тип ${blob.type}`);
+    return { blob, note: null };
+  }
+  // Маленький файл — отдаём как есть, ДО загрузки библиотеки.
   if (blob.size < SKIP_COMPRESS_BELOW_BYTES) {
     console.log(`[photo ${tag}] сжатие пропущено: ${mb(blob.size)} < ${mb(SKIP_COMPRESS_BELOW_BYTES)}`);
-    return blob;
+    return { blob, note: null };
   }
+
+  // HEIC/HEIF: библиотека его не умеет. Пробуем декодировать самим браузером
+  // (Safari умеет); не получилось — грузим как есть и честно говорим об этом.
+  if (isHeic(blob, name, realType)) {
+    console.log(`[photo ${tag}] HEIC — пробую canvas без библиотеки`);
+    try {
+      const out = await withRealType(await canvasCompress(blob));
+      console.log(`[photo ${tag}] HEIC через canvas получилось: ${mb(blob.size)} → ${mb(out.size)} (${out.type})`);
+      return { blob: out, note: null };
+    } catch (e) {
+      console.warn(`[photo ${tag}] HEIC не декодируется, загружаю как есть:`, e?.message || e);
+      return { blob, note: HEIC_MESSAGE };
+    }
+  }
+
+  // 1) библиотека
+  let out = null;
   try {
     // ВРЕМЕННО: тайминги диагностики (убрать после выяснения причины задержки).
-    console.time(`[photo ${tag}] import-lib`); // первая загрузка чанка библиотеки
+    console.time(`[photo ${tag}] import-lib`);
     let imageCompression;
     try {
       ({ default: imageCompression } = await import('browser-image-compression'));
@@ -120,19 +244,39 @@ async function compressBlob(blob, tag) {
       typeof File !== 'undefined' && blob instanceof File
         ? blob
         : new File([blob], 'photo', { type: blob.type });
+    const opts = getCompressOptions();
+    console.log(`[photo ${tag}] библиотека: fileType=${opts.fileType}, maxSizeMB=${opts.maxSizeMB}, quality=${opts.initialQuality}, worker=${opts.useWebWorker}`);
     console.time(`[photo ${tag}] compress`);
-    let out;
     try {
-      out = await imageCompression(file, COMPRESS_OPTIONS);
+      out = await imageCompression(file, opts);
     } finally {
       console.timeEnd(`[photo ${tag}] compress`);
     }
-    console.log(`[photo ${tag}] размер: ${mb(blob.size)} → ${mb(out.size)}`);
-    return out;
+    const real = await sniffMime(out);
+    console.log(`[photo ${tag}] библиотека вернула: ${mb(out.size)}, заявленный тип ${out.type}, реальный формат ${real || 'не определён'}`);
+    out = await withRealType(out);
   } catch (e) {
-    console.warn('[_photo] сжатие не удалось, загружаю оригинал:', e?.message || e);
-    return blob;
+    console.warn(`[photo ${tag}] библиотека упала:`, e?.message || e);
+    out = null;
   }
+
+  // Библиотека «не сработала», если: упала; не уменьшила файл (вернула оригинал);
+  // либо отдала PNG из не-PNG (так Safari «кодирует» WebP).
+  const srcIsPng = (realType || blob.type) === 'image/png';
+  const libFailed = !out || out.size >= blob.size || (out.type === 'image/png' && !srcIsPng);
+  if (!libFailed) return { blob: out, note: null };
+
+  // 2) запасной путь: чистый canvas
+  console.log(`[photo ${tag}] библиотека не помогла → пробую canvas (quality ${CANVAS_QUALITY})`);
+  try {
+    const fb = await withRealType(await canvasCompress(blob));
+    console.log(`[photo ${tag}] canvas: ${mb(blob.size)} → ${mb(fb.size)} (${fb.type})`);
+    if (fb.size < blob.size) return { blob: fb, note: null };
+    console.log(`[photo ${tag}] canvas тоже не уменьшил файл — оставляю оригинал`);
+  } catch (e) {
+    console.warn(`[photo ${tag}] canvas не получился:`, e?.message || e);
+  }
+  return { blob, note: null };
 }
 
 // data:[<mime>][;param...][;base64],<данные> → Blob.
@@ -203,8 +347,9 @@ export async function uploadPhoto(input) {
     // decode: data URL / blob: → Blob (для data URL — atob + копирование байт)
     console.time(`[photo ${tag}] decode`);
     let original;
+    let origName = '';
     try {
-      ({ blob: original } = await toBlob(input));
+      ({ blob: original, name: origName } = await toBlob(input));
     } finally {
       console.timeEnd(`[photo ${tag}] decode`);
     }
@@ -216,7 +361,12 @@ export async function uploadPhoto(input) {
       throw new Error('В bucket photos можно загружать только изображения');
     }
 
-    const blob = await compressBlob(original, tag);
+    // ДИАГНОСТИКА: что за файл пришёл
+    const realType = await sniffMime(original);
+    console.log(`[photo ${tag}] вход: имя="${origName || '(нет)'}", type="${original.type || '(пусто)'}", реальный формат=${realType || 'не определён'}, размер=${mb(original.size)}`);
+
+    const { blob, note } = await compressBlob(original, tag, origName, realType);
+    console.log(`[photo ${tag}] после сжатия: ${blob === original ? 'ОРИГИНАЛ (сжатие не сработало или не нужно)' : 'сжато'}, ${mb(original.size)} → ${mb(blob.size)}, type=${blob.type}`);
     // Страховка: после сжатия файл не должен превышать лимит (на случай,
     // если сжатие не сработало и вернулся оригинал).
     if (blob.size > MAX_PHOTO_BYTES) throw new Error(TOO_BIG_MESSAGE);
@@ -238,6 +388,12 @@ export async function uploadPhoto(input) {
       console.timeEnd(`[photo ${tag}] upload`);
     }
     if (uploadError) return { url: null, error: uploadError };
+
+    // ДИАГНОСТИКА + toast: сколько реально ушло в Storage
+    console.log(`[photo ${tag}] ушло в Storage: ${path}, ${mb(blob.size)}`);
+    if (note) reportPhoto(note);
+    else if (blob === original) reportPhoto(`Фото: ${mb(original.size)} (без сжатия)`);
+    else reportPhoto(`Фото: ${mb(original.size)} → ${mb(blob.size)}`);
 
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
     return { url: data.publicUrl, error: null };

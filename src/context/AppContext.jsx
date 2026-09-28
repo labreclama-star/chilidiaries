@@ -282,6 +282,16 @@ export function AppProvider({ children }) {
     }, 3200);
   }, []);
 
+  // Отчёт о сжатии фото из services/_photo.js: сервисы не имеют доступа
+  // к showToast, поэтому шлют событие на window, а мы показываем toast.
+  useEffect(() => {
+    function onPhotoReport(e) {
+      if (e.detail && e.detail.message) showToast(e.detail.message);
+    }
+    window.addEventListener('cd:photo-report', onPhotoReport);
+    return () => window.removeEventListener('cd:photo-report', onPhotoReport);
+  }, [showToast]);
+
   // ---- modal helpers ----
   const openModal = useCallback((name, payload) => {
     setActiveModal(name);
