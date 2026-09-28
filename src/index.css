@@ -1576,3 +1576,58 @@ footer{border-top:1px solid var(--scorch-line-soft);padding:56px 0 30px;margin-t
   letter-spacing:.4px;
 }
 .sidebar.collapsed .nav-wip-badge{display:none;}
+
+
+/* ============ MOBILE FIX 2026-09-28: контент не должен вылезать за экран ============ */
+
+/* 1. Главное: ячейки сетки могут сжиматься меньше своего содержимого */
+.grid > *,
+.hero-grid > *,
+.diary-detail-grid > *,
+.meta-strip > *,
+.steps > *,
+.hero-features > * { min-width: 0; }
+.hero-grid-single { grid-template-columns: minmax(0, 1fr); }
+.day-nav-row,
+.hscroll { max-width: 100%; min-width: 0; }
+
+@media (max-width: 980px) {
+  .hero-grid,
+  .diary-detail-grid,
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .grid-3,
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-5 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 768px) {
+  .grid-2,
+  .grid-3,
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .meta-strip,
+  .hero-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .footer-grid { grid-template-columns: minmax(0, 1fr); }
+
+  /* 2. Счётчики на главной: сетка 2×2, число не переносится */
+  .hero-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; }
+  .stat b { white-space: nowrap; font-size: 24px; }
+  .stat span { display: block; font-size: 11px; letter-spacing: .04em; }
+
+  /* 3. Запас снизу под нижнюю панель + FAB выше кнопок действий */
+  body { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .mobile-fab { bottom: calc(88px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 480px) {
+  .grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* 4. Заголовок hero на маленьких телефонах */
+  .billboard-hero h1 { font-size: 26px; line-height: 1.15; word-break: break-word; }
+  .hero-tagline { font-size: 16px; }
+
+  /* 5. Карточки гроверов: аватар 48 (компакт), мелкие подписи не распирают */
+  .grower-card--compact .avatar { width: 48px; height: 48px; font-size: 17px; }
+  .grower-card .gstats { gap: 8px; }
+  .grower-card .gstats div span { font-size: 9.5px; letter-spacing: 0; }
+}
