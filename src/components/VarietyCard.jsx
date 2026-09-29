@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PepperIcon from './PepperIcon.jsx';
 import Badge from './Badge.jsx';
@@ -12,6 +13,23 @@ export default function VarietyCard({ variety }) {
   const avgShu = (variety.shuMin + variety.shuMax) / 2;
   const color = heatColor(avgShu);
   const ratings = computeVarietyRatings(variety, varietyVotes);
+
+  // Описание в превью обрезано до 5 строк (CSS .variety-desc). Кнопку «Показать
+  // полностью» показываем, только если текст реально не влез: сравниваем полную
+  // высоту текста с видимой. Пересчитываем при смене текста, ширины окна и
+  // после загрузки шрифтов (от них зависит число строк).
+  const descRef = useRef(null);
+  const [isClamped, setIsClamped] = useState(false);
+  useEffect(() => {
+    const el = descRef.current;
+    if (!el) return undefined;
+    const check = () => setIsClamped(el.scrollHeight > el.clientHeight + 1);
+    check();
+    window.addEventListener('resize', check);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(check);
+    return () => window.removeEventListener('resize', check);
+  }, [variety.desc]);
+
   return (
     <Link to={`/varieties/${variety.id}`} className="card" style={{ cursor: 'pointer' }}>
       <div className="pod-media" style={podMediaStyle(variety, color)}>
@@ -26,7 +44,9 @@ export default function VarietyCard({ variety }) {
         <span style={{ fontSize: 11.5, color: 'var(--cream-faint)' }}>{variety.species}</span>
         <StarRating value={ratings.overall} compact />
         <MiniHeatGauge shu={avgShu} />
-        <p style={{ fontSize: 12.5, color: 'var(--cream-dim)' }}>{variety.desc}</p>
+        <p ref={descRef} className="variety-desc" style={{ fontSize: 12.5, color: 'var(--cream-dim)' }}>{variety.desc}</p>
+        {/* Вся карточка — уже ссылка на /varieties/:id, поэтому здесь span, а не вложенный <a> */}
+        {isClamped && <span className="variety-more">Показать полностью →</span>}
         <div className="card-tags">
           <Badge>Сложность: {variety.difficulty}</Badge>
           <Badge>{variety.days} дн.</Badge>

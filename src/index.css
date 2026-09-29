@@ -1689,3 +1689,35 @@ footer{border-top:1px solid var(--scorch-line-soft);padding:56px 0 30px;margin-t
   .back-nav,
   .wrap.back-nav { padding-top: 16px; }
 }
+
+
+/* ============ MOBILE FIX 4 (2026-09-28): hero-фото главной на телефоне (тёмная тема) ============ */
+/* На десктопе оверлей горизонтальный: слева сплошной тёмный (38%), справа фото. На телефоне
+   контент hero занимает всю ширину экрана, и почти вся видимая часть попадала под сплошную
+   тёмную левую часть градиента — фото «пропадало». Здесь оверлей вертикальный и заметно
+   прозрачнее; --hero-photo по-прежнему приходит из Home.jsx. Светлая тема не затрагивается
+   (у неё свои мобильные правила выше). Десктоп не затрагивается (правило только ≤768px). */
+@media (max-width: 768px) {
+  html:not([data-theme="light"]) .billboard-hero {
+    background-image:
+      linear-gradient(180deg, rgba(21,15,11,.72) 0%, rgba(21,15,11,.5) 40%, rgba(21,15,11,.62) 100%),
+      var(--hero-photo, none);
+    background-size: cover;
+    background-position: center;
+  }
+}
+
+
+/* ============ Карточка сорта: описание не длиннее 5 строк ============ */
+.variety-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere; /* очень длинное слово без пробелов не растягивает карточку */
+}
+.variety-more {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ember-bright);
+}
