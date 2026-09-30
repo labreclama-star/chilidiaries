@@ -6,8 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/generate-seo-files.mjs && vite build",
-    "test:chromium": "node scripts/chromium-smoke-test.mjs",
+    "build": "node scripts/generate-seo-files.mjs && vite build && node scripts/prerender.mjs",
+    "build:fast": "node scripts/generate-seo-files.mjs && vite build",
+    "prerender": "node scripts/prerender.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

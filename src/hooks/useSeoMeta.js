@@ -8,6 +8,10 @@
 //
 // Хук нельзя вызывать условно — вызывайте его ДО ранних return в компоненте.
 // Если данных ещё/уже нет, передавайте { title: '…не найден', noindex: true }.
+//
+// pending: true — теги уже можно ставить, но контент страницы ещё догружается
+// (например, «лёгкий» дневник). Пока pending, метка data-seo-ready на <html>
+// не ставится — по ней пререндер понимает, что страницу пора сохранять.
 
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -110,7 +114,7 @@ function writeState(s) {
 /**
  * @param {null | {
  *   title?: string, description?: string, image?: string,
- *   type?: string, noindex?: boolean
+ *   type?: string, noindex?: boolean, pending?: boolean
  * }} meta  null — ничего не менять (страница без своих тегов)
  */
 export function useSeoMeta(meta) {
@@ -121,18 +125,19 @@ export function useSeoMeta(meta) {
   const image = meta?.image;
   const type = meta?.type;
   const noindex = meta?.noindex;
+  const pending = !!meta?.pending;
 
   useEffect(() => {
     if (!active) return undefined;
     writeState(buildState({ title, description, image, type, noindex }, pathname));
-    // Метка «теги этой страницы готовы» — по ней пререндер (Шаг 4)
-    // поймёт, что страницу можно сохранять.
-    document.documentElement.setAttribute('data-seo-ready', pathname);
+    // Метка «теги И контент страницы готовы» — по ней пререндер (Шаг 4)
+    // поймёт, что страницу можно сохранять. Пока pending — метку не ставим.
+    if (!pending) document.documentElement.setAttribute('data-seo-ready', pathname);
     return () => {
       writeState(buildState(null, pathname));
       document.documentElement.removeAttribute('data-seo-ready');
     };
-  }, [active, title, description, image, type, noindex, pathname]);
+  }, [active, title, description, image, type, noindex, pending, pathname]);
 }
 
 // Компонент-обёртка: <SeoMeta title="…" noindex /> — для мест, где хук не вызвать

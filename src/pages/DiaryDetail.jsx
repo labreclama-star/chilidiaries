@@ -38,12 +38,15 @@ export default function DiaryDetail() {
   // SEO: title / description / canonical / og-теги страницы дневника.
   // Вызываем ДО ранних return — хуки нельзя вызывать условно.
   // Берём только поля, которые есть и в «лёгком» дневнике из списка (_partial).
+  // pending: пока полный дневник не подтянут, страница пишет «Загружаю дневник…» —
+  // такой снимок пререндеру сохранять нельзя, поэтому метку готовности откладываем.
   const seoVariety = d ? findVariety(d.varietyId) : null;
   const seoGrower = d ? growers.find((x) => x.id === d.growerId) : null;
   useSeoMeta(d ? {
     title: d.title,
     description: d.desc || `Пошаговый дневник выращивания острого перца${seoVariety ? ` — сорт ${seoVariety.name}` : ''}${seoGrower ? `, автор ${seoGrower.name}` : ''}. Стадия: ${d.stage}.`,
-    image: d.coverPhoto || seoVariety?.photo
+    image: d.coverPhoto || seoVariety?.photo,
+    pending: !!d._partial
   } : { title: 'Дневник не найден', noindex: true });
 
   // Список дневников — облегчённый: weeks/comments там заглушки для DiaryCard
