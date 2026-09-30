@@ -4,14 +4,37 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<title>ChiliDiaries — дневники выращивания острого перца</title>
-<meta name="description" content="ChiliDiaries — сообщество гроверов острого перца: пошаговые дневники выращивания от рассады до урожая, каталог сортов с замерами SHU, рецепты соусов и приправ, обучающий блог." />
 <meta name="theme-color" content="#150F0B" />
+
+<!-- ============ SEO: базовые (по умолчанию) мета-теги ============
+     %SITE_URL% при сборке автоматически заменяется на baseUrl из src/config/seo.js
+     (см. vite.config.js). Адрес сайта меняется в ОДНОМ месте — в seo.js.
+
+     Намеренно НЕТ здесь <link rel="canonical"> и og:url: в статичном index.html они
+     были бы одинаковыми для всех страниц (все указывали бы на главную), и поисковик
+     счёл бы каждую страницу дублем главной. Они ставятся динамически для каждой
+     страницы отдельно — это Шаг 3 (динамические мета-теги). -->
+<title>ChiliDiaries — дневники выращивания острого перца</title>
+<meta name="description" content="Сообщество гроверов острого перца: пошаговые дневники выращивания, каталог сортов с замерами SHU, рецепты соусов и обучающий блог." />
+
+<!-- Open Graph (превью ссылок в Telegram, VK, WhatsApp, Facebook) -->
 <meta property="og:type" content="website" />
+<meta property="og:site_name" content="ChiliDiaries" />
+<meta property="og:locale" content="ru_RU" />
 <meta property="og:title" content="ChiliDiaries — дневники выращивания острого перца" />
 <meta property="og:description" content="Веди дневник выращивания острого перца, сравнивай сорта по остроте (SHU), делись рецептами и читай блог сообщества." />
-<meta property="og:image" content="/favicon.svg" />
-<meta name="twitter:card" content="summary" />
+<meta property="og:image" content="%SITE_URL%/og-image.jpg" />
+<meta property="og:image:type" content="image/jpeg" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="ChiliDiaries — дневники выращивания острого перца" />
+
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="ChiliDiaries — дневники выращивания острого перца" />
+<meta name="twitter:description" content="Веди дневник выращивания острого перца, сравнивай сорта по остроте (SHU), делись рецептами и читай блог сообщества." />
+<meta name="twitter:image" content="%SITE_URL%/og-image.jpg" />
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Hero главной — CSS-фон, который React выставляет только после загрузки JS, поэтому
      браузер узнаёт о нём поздно. Preload заставляет начать качать файл сразу при разборе HTML.
