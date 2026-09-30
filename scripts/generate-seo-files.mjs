@@ -38,7 +38,12 @@ const staticPaths = [
 // filter — необязательные параметры PostgREST: убирают скрытые/удалённые записи.
 const dynamicSources = [
   { prefix: '/varieties', table: 'varieties' },
-  { prefix: '/diaries', table: 'diaries' },
+  {
+    prefix: '/diaries',
+    table: 'diaries',
+    // приватные дневники в sitemap не попадают (даже если политика БД их отдаёт)
+    filter: { is_private: 'eq.false' },
+  },
   {
     prefix: '/recipes',
     table: 'recipes',
