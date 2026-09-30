@@ -341,6 +341,7 @@ export function diaryReportRowToJs(row) {
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .map(diaryPhotoRowToJs);
   return {
+    id: row.id, // id строки diary_reports: уникален в БД, нужен для key и deleteWeekReport
     n: row.report_number,
     day: row.day_number,
     title: row.title,
@@ -480,7 +481,8 @@ export function diaryRowToJs(row) {
  * по возрастанию дня (иначе "последний" окажется не последним по времени).
  *
  * Соответствующий select в diaryService.js:
- *   reports:diary_reports(day_number), comments:comments(count)
+ *   reports:diary_reports(id, day_number), comments:comments(count)
+ * (id отчёта нужен как уникальный key в ленте: n в списке всегда null)
  * — облегчённый, без title/note/photos/author и без полного списка
  * комментариев, чтобы карточки каталога не тащили тяжёлые вложенные данные.
  *
@@ -497,7 +499,7 @@ export function diaryListRowToJs(row) {
   const weeks = (row.reports || [])
     .slice()
     .sort((a, b) => (a.day_number ?? 0) - (b.day_number ?? 0))
-    .map((r) => ({ day: r.day_number, n: null }));
+    .map((r) => ({ id: r.id, day: r.day_number, n: null }));
   const commentsCount = row.comments?.[0]?.count ?? 0;
   return {
     id: row.id,

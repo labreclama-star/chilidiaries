@@ -43,8 +43,9 @@ export default function Feed() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 50 }}>
-            {feedItems.map(({ diary, week }) => (
-              <FeedItem key={`${diary.id}-${week.n}`} diary={diary} week={week} />
+            {/* key: id отчёта из БД уникален. Запасные варианты — для мок-данных (там есть n) */}
+            {feedItems.map(({ diary, week }, i) => (
+              <FeedItem key={`${diary.id}-${week.id ?? week.n ?? i}`} diary={diary} week={week} />
             ))}
           </div>
         )}

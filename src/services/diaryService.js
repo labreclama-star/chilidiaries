@@ -46,12 +46,12 @@ const DIARY_FULL_SELECT = `
 // DiaryCard.jsx оказался не таким "плоским", как предполагалось изначально —
 // он читает diary.comments.length и latestReportDay(diary) (последний
 // diary.weeks[].day/.n) — поэтому список тащит МИНИМУМ вложенных данных
-// (только day_number и count комментариев), а не только плоские колонки
+// (только id/day_number отчётов и count комментариев), а не только плоские колонки
 // diaries. Полные weeks/comments по-прежнему только в getDiaryById.
 const DIARY_LIST_SELECT = `
   *,
   diary_varieties(variety_id),
-  reports:diary_reports(day_number),
+  reports:diary_reports(id, day_number),
   comments:comments(count)
 `;
 
