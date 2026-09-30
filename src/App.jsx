@@ -58,6 +58,7 @@ import AdminSettings from './admin/pages/AdminSettings.jsx';
 import AdminData from './admin/pages/AdminData.jsx';
 
 import { useApp } from './context/AppContext.jsx';
+import { SeoMeta, StaticRouteSeo } from './hooks/useSeoMeta.js';
 
 // Сбрасываем скролл в самый верх при смене маршрута (иначе после клика по карточке
 // детальная страница открывается на той же прокрутке, что была в списке).
@@ -101,6 +102,8 @@ export default function App() {
         <main>
           {!isAdminRoute && <BackButton />}
           <ScrollToTop />
+          {/* SEO-теги для статичных страниц (тексты — в src/config/seo.js) */}
+          <StaticRouteSeo />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/feed" element={<Feed />} />
@@ -138,7 +141,7 @@ export default function App() {
               <Route path="data" element={<AdminData />} />
             </Route>
 
-            <Route path="*" element={<NotFound />} />
+            <Route path="*" element={<><SeoMeta title="Страница не найдена" noindex /><NotFound /></>} />
           </Routes>
         </main>
         {!isAdminRoute && <Footer />}

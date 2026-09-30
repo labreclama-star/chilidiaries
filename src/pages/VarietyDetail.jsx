@@ -8,11 +8,20 @@ import PhotoFrame from '../components/PhotoFrame.jsx';
 import { HeroHeatGauge } from '../components/HeatGauge.jsx';
 import { heatColor, fmtNum, podMediaStyle, varietyProgressInsight } from '../utils/helpers.js';
 import { computeVarietyRatings } from '../utils/varietyRatings.js';
+import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function VarietyDetail() {
   const { id } = useParams();
   const { varieties, diaries, varietyVotes } = useApp();
   const v = varieties.find((x) => x.id === id);
+
+  // SEO: title / description / canonical / og-теги страницы сорта.
+  // Вызываем ДО раннего return — хуки нельзя вызывать условно.
+  useSeoMeta(v ? {
+    title: `${v.name} — ${fmtNum(v.shuMax)} SHU`,
+    description: `${v.name}: ${fmtNum(v.shuMin)}–${fmtNum(v.shuMax)} SHU. ${v.desc || `Сорт острого перца, созревание ${v.days} дн.`}`,
+    image: v.photo
+  } : { title: 'Сорт не найден', noindex: true });
 
   if (!v) {
     return (

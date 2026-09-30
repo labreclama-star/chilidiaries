@@ -12,6 +12,7 @@ import StatsCard from '../components/StatsCard.jsx';
 import AchievementBadges from '../components/AchievementBadges.jsx';
 import { MiniHeatGauge } from '../components/HeatGauge.jsx';
 import { heatColor, fmtNum, varietyNames, diaryMediaStyle, latestReportDay, communityShuDelta, varietyProgressInsight, intervalLabel, DIARY_STAGES } from '../utils/helpers.js';
+import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function DiaryDetail() {
   const { id } = useParams();
@@ -33,6 +34,17 @@ export default function DiaryDetail() {
 
   const findVariety = (vid) => varieties.find((x) => x.id === vid);
   const d = diaries.find((x) => x.id === id);
+
+  // SEO: title / description / canonical / og-теги страницы дневника.
+  // Вызываем ДО ранних return — хуки нельзя вызывать условно.
+  // Берём только поля, которые есть и в «лёгком» дневнике из списка (_partial).
+  const seoVariety = d ? findVariety(d.varietyId) : null;
+  const seoGrower = d ? growers.find((x) => x.id === d.growerId) : null;
+  useSeoMeta(d ? {
+    title: d.title,
+    description: d.desc || `Пошаговый дневник выращивания острого перца${seoVariety ? ` — сорт ${seoVariety.name}` : ''}${seoGrower ? `, автор ${seoGrower.name}` : ''}. Стадия: ${d.stage}.`,
+    image: d.coverPhoto || seoVariety?.photo
+  } : { title: 'Дневник не найден', noindex: true });
 
   // Список дневников — облегчённый: weeks/comments там заглушки для DiaryCard
   // (d._partial === true, см. diaryListRowToJs). Пока не подтянули полный
