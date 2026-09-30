@@ -9,6 +9,7 @@ import RecipeCard from '../components/RecipeCard.jsx';
 import ArticleCard from '../components/ArticleCard.jsx';
 import SeedBankSection from '../components/SeedBankSection.jsx';
 import { fmtNum } from '../utils/helpers.js';
+import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function GrowerDetail() {
   const { id } = useParams();
@@ -18,6 +19,16 @@ export default function GrowerDetail() {
     currentUser, toggleFollowGrower, openModal, showToast
   } = useApp();
   const g = growers.find((x) => x.id === id);
+
+  // SEO: title / description / canonical / og-теги профиля гровера.
+  // Вызываем ДО раннего return — хуки нельзя вызывать условно.
+  // Забаненных и удалённых не индексируем.
+  useSeoMeta(g ? {
+    title: `${g.name} — гровер острого перца`,
+    description: `${g.name}: дневники выращивания острого перца, рецепты и статьи. ${g.bio || ''}`,
+    image: g.avatar,
+    noindex: !!(g.banned || g.deleted)
+  } : { title: 'Гровер не найден', noindex: true });
 
   if (!g) {
     return (

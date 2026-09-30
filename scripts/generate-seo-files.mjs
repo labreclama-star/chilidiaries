@@ -48,8 +48,8 @@ const dynamicSources = [
   {
     prefix: '/blog',
     table: 'blog_posts',
-    // отклонённые статьи не показываем (остальные статусы уточним позже)
-    filter: { status: 'neq.rejected' },
+    // в sitemap только одобренные модерацией статьи (pending / rejected — не попадают)
+    filter: { status: 'eq.approved' },
   },
   { prefix: '/questions', table: 'questions' },
   {

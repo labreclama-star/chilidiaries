@@ -6,6 +6,7 @@ import Comment from '../components/Comment.jsx';
 import Badge from '../components/Badge.jsx';
 import { PepperLikeIcon } from '../components/QuestionCard.jsx';
 import { dayCount, timeAgo } from '../utils/helpers.js';
+import { useSeoMeta, cutText } from '../hooks/useSeoMeta.js';
 
 export default function QuestionDetail() {
   const { id } = useParams();
@@ -14,6 +15,14 @@ export default function QuestionDetail() {
     toggleLikeQuestion, addAnswer, markSolved, showToast
   } = useApp();
   const q = questions.find((x) => x.id === id);
+
+  // SEO: у вопроса нет заголовка — title берём из начала текста вопроса.
+  // Вызываем ДО раннего return — хуки нельзя вызывать условно.
+  useSeoMeta(q ? {
+    title: cutText(q.text, 70),
+    description: q.text,
+    image: q.photo
+  } : { title: 'Вопрос не найден', noindex: true });
   const [tab, setTab] = useState('all');
   const [answerText, setAnswerText] = useState('');
 

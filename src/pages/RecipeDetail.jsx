@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext.jsx';
 import Avatar from '../components/Avatar.jsx';
 import PhotoFrame from '../components/PhotoFrame.jsx';
+import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function RecipeDetail() {
   const { id } = useParams();
@@ -12,6 +13,16 @@ export default function RecipeDetail() {
     toggleFollowGrower, showToast
   } = useApp();
   const r = recipes.find((x) => x.id === id);
+
+  // SEO: title / description / canonical / og-теги рецепта.
+  // Вызываем ДО раннего return — хуки нельзя вызывать условно.
+  // Скрытые админом рецепты не индексируем (страница по прямой ссылке открывается).
+  useSeoMeta(r ? {
+    title: r.title,
+    description: r.desc || `Рецепт${r.category ? ` (${r.category})` : ''}: ${(r.ingredients || []).slice(0, 5).join(', ')}.`,
+    image: r.photo,
+    noindex: !!r.hidden
+  } : { title: 'Рецепт не найден', noindex: true });
   const countedRef = useRef(null);
 
   useEffect(() => {

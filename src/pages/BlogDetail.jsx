@@ -4,11 +4,23 @@ import { useApp } from '../context/AppContext.jsx';
 import Avatar from '../components/Avatar.jsx';
 import Badge from '../components/Badge.jsx';
 import PhotoFrame from '../components/PhotoFrame.jsx';
+import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function BlogDetail() {
   const { id } = useParams();
   const { blogPosts, growers, currentUser, toggleLikeBlogPost, incrementBlogViews, showToast } = useApp();
   const p = blogPosts.find((x) => x.id === id);
+
+  // SEO: title / description / canonical / og-теги статьи (og:type = article).
+  // Вызываем ДО раннего return — хуки нельзя вызывать условно.
+  // Индексируем только одобренные статьи; на модерации и отклонённые — noindex.
+  useSeoMeta(p ? {
+    title: p.title,
+    description: p.excerpt || (p.content && p.content[0]) || '',
+    image: p.photo,
+    type: 'article',
+    noindex: p.status !== 'approved'
+  } : { title: 'Статья не найдена', noindex: true });
   const countedRef = useRef(null);
 
   useEffect(() => {
