@@ -21,3 +21,7 @@ scripts/.migration-id-map.json
 
 # Локальные бэкапы, не коммитим
 backup-*/
+
+# SEO-файлы генерируются из скрипта перед сборкой
+public/sitemap.xml
+public/robots.txt
