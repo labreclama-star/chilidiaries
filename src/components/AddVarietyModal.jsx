@@ -46,8 +46,17 @@ export default function AddVarietyModal() {
     }
     setSubmitting(true);
     try {
-      await addVariety(form, { returnToWizard });
-      setForm(emptyForm());
+      const v = await addVariety(form, { returnToWizard });
+      if (v) {
+        setForm(emptyForm());
+        // Если добавляли из визарда дневника, addVariety уже переключила
+        // activeModal на 'wizard' — саму модалку здесь не закрываем, иначе
+        // мы бы обнулили activeModal и визард пропал бы, едва открывшись.
+        // В остальных случаях модалка раньше оставалась висеть — закрываем сами.
+        if (!returnToWizard) closeModal();
+      }
+      // v === null — addVariety уже показала toast с причиной, форму не сбрасываем,
+      // чтобы пользователь не перепечатывал всё заново.
     } finally {
       setSubmitting(false);
     }
