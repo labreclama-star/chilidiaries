@@ -44,6 +44,20 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+<!-- Применяем сохранённую тему и свёрнутость сайдбара ДО первой отрисовки: иначе у
+     пользователей светлой темы страница (и пререндер-снимок) на миг мелькнёт тёмной.
+     Ключ и формат — как в src/services/persistenceService.js (chilidiaries_state_v1, _v: 1).
+     Скрипт стоит в начале <body>, потому что класс sidebar-collapsed вешается на body. -->
+<script>
+(function () {
+  try {
+    var s = JSON.parse(localStorage.getItem('chilidiaries_state_v1'));
+    if (!s || s._v !== 1) return;
+    if (s.theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    if (s.sidebarCollapsed === true) document.body.classList.add('sidebar-collapsed');
+  } catch (e) {}
+})();
+</script>
 <div id="root"></div>
 <script type="module" src="/src/main.jsx"></script>
 </body>

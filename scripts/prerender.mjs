@@ -10,7 +10,8 @@
 //   SKIP_PRERENDER=1            — пропустить пререндер (быстрая локальная сборка)
 //   PRERENDER_MAX=2000          — максимум страниц
 //   PRERENDER_BUDGET_MIN=10     — бюджет времени, минут (лимит сборки Cloudflare — 20)
-//   PRERENDER_PAGE_TIMEOUT_MS   — ожидание одной страницы (по умолч. 20000)
+//   PRERENDER_PAGE_TIMEOUT_MS   — ожидание одной страницы (по умолч. 30000)
+//   PRERENDER_CONCURRENCY=4     — сколько вкладок открыто одновременно
 //   PRERENDER_HOME_TARGET=/home — куда правило _redirects отправляет "/"
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
@@ -23,9 +24,9 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = resolve(rootDir, 'dist');
 
 // ---------- НАСТРОЙКИ ----------
-const CONCURRENCY = 6; // сколько вкладок открыто одновременно
+const CONCURRENCY = Number(process.env.PRERENDER_CONCURRENCY) || 4; // вкладок одновременно
 const MAX_ATTEMPTS = 2; // одна повторная попытка при сбое страницы
-const PAGE_TIMEOUT_MS = Number(process.env.PRERENDER_PAGE_TIMEOUT_MS) || 20000;
+const PAGE_TIMEOUT_MS = Number(process.env.PRERENDER_PAGE_TIMEOUT_MS) || 30000;
 const MAX_PAGES = Number(process.env.PRERENDER_MAX) || 2000;
 const TIME_BUDGET_MS = (Number(process.env.PRERENDER_BUDGET_MIN) || 10) * 60 * 1000;
 const HOME_TARGET = process.env.PRERENDER_HOME_TARGET || '/home';
@@ -144,6 +145,7 @@ function finalizeHtml(html, path) {
 async function renderRoute(browser, origin, path) {
   const page = await browser.newPage();
   const apiProblems = [];
+  const pendingApi = new Set(); // запросы к Supabase, которые ещё не завершились (для диагностики)
   try {
     await page.setViewport({ width: 1280, height: 900 });
 
@@ -151,6 +153,7 @@ async function renderRoute(browser, origin, path) {
     // меняет вид по onLoad, и снимок получился бы с пустыми фото.
     await page.setRequestInterception(true);
     page.on('request', (req) => {
+      if (isApi(req.url())) pendingApi.add(req);
       const type = req.resourceType();
       const job = type === 'font' || type === 'media' ? req.abort() : req.continue();
       Promise.resolve(job).catch(() => {});
@@ -158,7 +161,9 @@ async function renderRoute(browser, origin, path) {
 
     // Сбой запроса к Supabase = данные могли не загрузиться (приложение молча
     // подставит пустые списки или мок). Такой снимок сохранять нельзя.
+    page.on('requestfinished', (req) => pendingApi.delete(req));
     page.on('requestfailed', (req) => {
+      pendingApi.delete(req);
       if (isApi(req.url())) apiProblems.push(`сбой запроса ${new URL(req.url()).pathname}`);
     });
     page.on('response', (res) => {
@@ -170,11 +175,26 @@ async function renderRoute(browser, origin, path) {
     await page.goto(origin + path, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
 
     // Метка ставится хуком useSeoMeta, когда теги И контент страницы окончательные
-    await page.waitForFunction(
-      (p) => document.documentElement.getAttribute('data-seo-ready') === p,
-      { timeout: PAGE_TIMEOUT_MS },
-      path
-    );
+    try {
+      await page.waitForFunction(
+        (p) => document.documentElement.getAttribute('data-seo-ready') === p,
+        { timeout: PAGE_TIMEOUT_MS },
+        path
+      );
+    } catch (e) {
+      // Объясняем, ЧТО именно не дождались: медленный Supabase или тяжёлая страница
+      const state = await page
+        .evaluate(() => ({
+          ready: document.documentElement.getAttribute('data-seo-ready'),
+          loading: /Загрузка ChiliDiaries|Загружаю дневник/.test(document.body.innerText),
+        }))
+        .catch(() => null);
+      throw new Error(
+        `не дождались метки за ${PAGE_TIMEOUT_MS / 1000} с ` +
+        `(метка: ${state?.ready ?? 'нет'}, экран загрузки: ${state?.loading ? 'да' : 'нет'}, ` +
+        `запросов Supabase в ожидании: ${pendingApi.size})`
+      );
+    }
     // два кадра — чтобы React успел дорисовать всё после эффектов
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
