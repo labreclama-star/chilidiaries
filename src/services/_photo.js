@@ -19,7 +19,7 @@
 //   'blob:...' (createObjectURL) → скачиваем Blob, сжимаем, грузим
 //   SVG / GIF                  → грузим как есть (см. SKIP_COMPRESS_TYPES)
 //   файл < 200 КБ              → грузим как есть, без сжатия (SKIP_COMPRESS_BELOW_BYTES)
-//   HEIC/HEIF                  → сжимаем через canvas (Safari его декодирует); не вышло — как есть + toast
+//   HEIC/HEIF                  → конвертируем в JPEG через heic2any, затем сжимаем; не вышло — как есть + toast
 //   что-то ещё                 → { url: null, error }
 //   файл > 5 МБ                → { url: null, error: 'Файл больше 5 МБ' }
 //
@@ -152,9 +152,9 @@ function isHeic(blob, name, realType) {
 }
 
 // Сжатие «вручную» через canvas, без библиотеки: нарисовали картинку в canvas
-// уменьшенной и сохранили с quality 0.7. Safari умеет декодировать даже HEIC,
-// поэтому этот путь годится и для него. Бросает Error, если картинку не
-// удалось декодировать.
+// уменьшенной и сохранили с quality 0.65. Используется как запасной путь для
+// HEIC (после конвертации в JPEG через heic2any) и для случаев, когда основная
+// библиотека не справилась. Бросает Error, если картинку не удалось декодировать.
 async function canvasCompress(blob) {
   const url = URL.createObjectURL(blob);
   try {
@@ -196,11 +196,11 @@ async function withRealType(blob) {
 
 // Сжимает Blob. Возвращает { blob, note }: note — текст для toast'а, если
 // случилось что-то, о чём пользователю надо сказать (сейчас — только HEIC).
-// Порядок: HEIC → сразу canvas; остальное → библиотека, а если она упала или
-// не дала выигрыша (>= оригинала) — canvas. Ничего не вышло → оригинал, загрузку
-// не блокируем (лимит 5 МБ к этому моменту уже проверен по исходнику).
-// Библиотека подключается динамическим import(), чтобы не попадать в основной
-// бандл: скачается при первой загрузке фото.
+// Порядок: HEIC → heic2any (JPEG) → canvas; остальное → библиотека, а если она
+// упала или не дала выигрыша (>= оригинала) — canvas. Ничего не вышло → оригинал,
+// загрузку не блокируем (лимит 5 МБ к этому моменту уже проверен по исходнику).
+// Библиотеки подключаются динамическим import(), чтобы не попадать в основной
+// бандл: скачаются при первой загрузке фото соответствующего типа.
 // tag — короткий id вызова: console.time требует уникальную метку, а фото могут
 // грузиться параллельно (несколько фото в отчёте).
 async function compressBlob(blob, tag, name, realType) {
@@ -214,17 +214,29 @@ async function compressBlob(blob, tag, name, realType) {
     return { blob, note: null };
   }
 
-  // HEIC/HEIF: библиотека его не умеет. Пробуем декодировать самим браузером
-  // (Safari умеет); не получилось — грузим как есть и честно говорим об этом.
+  // HEIC/HEIF: библиотека его не умеет. Сначала конвертируем в JPEG через
+  // heic2any (работает во всех браузерах), затем прогоняем обычный canvas,
+  // чтобы уложиться в целевой размер. Не получилось — грузим как есть.
   if (isHeic(blob, name, realType)) {
-    console.log(`[photo ${tag}] HEIC — пробую canvas без библиотеки`);
+    console.log(`[photo ${tag}] HEIC — конвертирую через heic2any`);
     try {
-      const out = await withRealType(await canvasCompress(blob));
-      console.log(`[photo ${tag}] HEIC через canvas получилось: ${mb(blob.size)} → ${mb(out.size)} (${out.type})`);
+      const { default: heic2any } = await import('heic2any');
+      const res = await heic2any({ blob, toType: 'image/jpeg', quality: 0.7 });
+      const jpegBlob = Array.isArray(res) ? res[0] : res;
+      console.log(`[photo ${tag}] HEIC → JPEG: ${mb(blob.size)} → ${mb(jpegBlob.size)}`);
+      const out = await withRealType(await canvasCompress(jpegBlob));
+      console.log(`[photo ${tag}] HEIC → JPEG → canvas: ${mb(out.size)} (${out.type})`);
       return { blob: out, note: null };
     } catch (e) {
-      console.warn(`[photo ${tag}] HEIC не декодируется, загружаю как есть:`, e?.message || e);
-      return { blob, note: HEIC_MESSAGE };
+      console.warn(`[photo ${tag}] heic2any упал, пробую canvas напрямую:`, e?.message || e);
+      try {
+        const out = await withRealType(await canvasCompress(blob));
+        console.log(`[photo ${tag}] HEIC через canvas: ${mb(blob.size)} → ${mb(out.size)}`);
+        return { blob: out, note: null };
+      } catch (e2) {
+        console.warn(`[photo ${tag}] HEIC не декодируется, гружу как есть:`, e2?.message || e2);
+        return { blob, note: HEIC_MESSAGE };
+      }
     }
   }
 
