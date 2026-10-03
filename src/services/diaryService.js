@@ -71,6 +71,20 @@ function localDateISO(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+// Загружает массив фото в Storage с ограничением параллельности. По умолчанию —
+// по 2 фото разом. Причина: 8 одновременных загрузок перегружают канал, часть
+// соединений рвётся с ERR_HTTP2_PROTOCOL_ERROR, и фото теряются. Порядок
+// результатов сохраняется (position = индекс в diary_photos).
+async function uploadPhotosLimited(photos, limit = 2) {
+  const results = [];
+  for (let i = 0; i < photos.length; i += limit) {
+    const batch = photos.slice(i, i + limit);
+    const batchResults = await Promise.all(batch.map((p) => photoUrlForDb(p, 'diaryService')));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 // Этап 3, Группа C (с правкой после проверки DiaryCard.jsx): сначала
 // пробуем Supabase (таблица diaries), при ошибке или пустом ответе —
 // падаем на мок (buildInitialDiaries(growers)) с console.warn.
@@ -227,6 +241,8 @@ export async function insertDiary({ title, note, varieties, location, medium, st
  * 2) Если есть фото — один batch INSERT в diary_photos (position = индекс).
  *    Через photoUrlForDb: файлы грузятся в Storage (см. _photo.js), в БД
  *    уходят только публичные URL; не загрузившиеся фото пропускаются.
+ *    Загрузка идёт ОЧЕРЕДЬЮ по 2 фото (uploadPhotosLimited): при 8+ фото
+ *    одновременные соединения рвутся с ERR_HTTP2_PROTOCOL_ERROR.
  * 3) Возвращает отчёт через diaryReportRowToJs (photos — массив URL-строк).
  *
  * Если отчёт вставился, а фото — нет: отчёт НЕ откатываем (триггер
@@ -256,12 +272,12 @@ export async function insertWeekReport({ diaryId, title, note, temp, hum, photos
       .single();
     if (error) return fail(error);
 
-    // photoUrlForDb асинхронная (грузит файл в Storage), поэтому map отдаёт
-    // массив промисов — ждём их все через Promise.all. Без этого filter(Boolean)
-    // пропустил бы сами Promise'ы (они всегда truthy), а в diary_photos.url
-    // ушло бы "[object Promise]". Порядок сохраняется → position = индекс.
+    // photoUrlForDb асинхронная (грузит файл в Storage). Идём через
+    // uploadPhotosLimited: по 2 фото за раз, чтобы не перегружать канал
+    // (8 одновременных загрузок рвутся с ERR_HTTP2_PROTOCOL_ERROR).
+    // Порядок сохраняется → position = индекс.
     const photoList = (Array.isArray(photos) ? photos : []).filter(Boolean); // пустые слоты формы не считаем
-    const urls = (await Promise.all(photoList.map((p) => photoUrlForDb(p, 'diaryService')))).filter(Boolean);
+    const urls = (await uploadPhotosLimited(photoList, 2)).filter(Boolean);
 
     let photoRows = [];
     let warning = null;
