@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 // Насколько далеко (px) нужно потянуть фото вверх/вниз, чтобы лайтбокс закрылся
 const SWIPE_CLOSE_PX = 80;
@@ -16,6 +17,10 @@ const AXIS_LOCK_PX = 8;
  *  - свайп вверх или вниз закрывает лайтбокс;
  *  - свайп влево/вправо листает фото (если их больше одного);
  *  - вверху слева — кнопка «назад».
+ *
+ * Рендерится через createPortal в document.body — иначе position:fixed
+ * ломается, если у родителя есть transform/filter/backdrop-filter, и футер
+ * «наезжает» поверх лайтбокса при прокрутке.
  */
 export default function Lightbox({ photos, index, onClose, onIndexChange }) {
   const goPrev = useCallback(() => {
@@ -103,10 +108,12 @@ export default function Lightbox({ photos, index, onClose, onIndexChange }) {
       if (e.key === 'ArrowRight') goNext();
     }
     window.addEventListener('keydown', onKey);
+    // Сохраняем прежнее значение и не даём прокрутке страницы под лайтбоксом
+    const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      document.body.style.overflow = prevOverflow;
     };
   }, [onClose, goPrev, goNext]);
 
@@ -121,7 +128,9 @@ export default function Lightbox({ photos, index, onClose, onIndexChange }) {
     transition: dragging ? 'none' : 'transform .2s ease'
   };
 
-  return (
+  // Портал в document.body: position:fixed перестаёт зависеть от transform/filter
+  // у родителя (WeekItem / DiaryHeroGallery), поэтому футер не наезжает.
+  return createPortal(
     <div
       className="lightbox-overlay"
       style={overlayStyle}
@@ -168,6 +177,7 @@ export default function Lightbox({ photos, index, onClose, onIndexChange }) {
       {multiPhoto && (
         <div className="lightbox-counter">{index + 1} / {photos.length}</div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
