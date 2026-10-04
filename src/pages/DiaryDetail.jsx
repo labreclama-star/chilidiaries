@@ -95,6 +95,16 @@ export default function DiaryDetail() {
   const color = heatColor(d.shu);
   const isOwner = !!(currentUser && currentUser.growerId === d.growerId);
 
+  // Гровер текущего пользователя — для аватара в форме комментария.
+  const me = currentUser ? growers.find((x) => x.id === currentUser.growerId) : null;
+
+  // Автор комментария: сначала по authorId (надёжно), а если его нет (комментарий
+  // добавлен в этой сессии) — по имени. Не нашли — будут буквы вместо фото.
+  function findCommentAuthor(c) {
+    if (c.authorId) return growers.find((x) => x.id === c.authorId);
+    return growers.find((x) => x.name === c.author);
+  }
+
   const heroFallbackStyle = { background: `radial-gradient(circle at 30% 20%,${color}40,var(--soil-900) 75%)` };
   // Собираем все фото дневника (обложка + фото из всех отчётов) для галереи —
   // раньше в hero показывалось только одно статичное фото.
@@ -242,20 +252,23 @@ export default function DiaryDetail() {
           </div>
         ) : (
           <div className="weeks">
-            {d.weeks.map((w) => <WeekItem key={w.n} week={w} diaryColor={color} />)}
+            {/* diaryId и canEdit — для кнопок «Редактировать» / «Удалить» у автора дневника */}
+            {d.weeks.map((w) => <WeekItem key={w.n} week={w} diaryColor={color} diaryId={d.id} canEdit={isOwner} />)}
           </div>
         )}
 
         <div className="comments-block">
           <h2 style={{ fontSize: 22, marginBottom: 20 }}>Комментарии ({d.comments.length})</h2>
-          {(showAllComments ? d.comments : d.comments.slice(0, 3)).map((c, i) => <Comment key={c.id ?? i} comment={c} />)}
+          {(showAllComments ? d.comments : d.comments.slice(0, 3)).map((c, i) => (
+            <Comment key={c.id ?? i} comment={{ ...c, avatar: findCommentAuthor(c)?.avatar }} />
+          ))}
           {!showAllComments && d.comments.length > 3 && (
             <button className="btn btn-outline btn-sm" style={{ marginTop: 6 }} onClick={() => setShowAllComments(true)}>
               Показать все комментарии ({d.comments.length})
             </button>
           )}
           <div className="comment-form">
-            <Avatar name={currentUser ? currentUser.name : 'Гость'} size={34} />
+            <Avatar name={currentUser ? currentUser.name : 'Гость'} photo={me?.avatar} size={34} />
             <textarea
               placeholder={currentUser ? 'Оставь комментарий…' : 'Войди, чтобы оставить комментарий…'}
               value={commentText}

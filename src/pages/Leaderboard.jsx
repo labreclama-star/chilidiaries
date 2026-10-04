@@ -17,7 +17,9 @@ export default function Leaderboard() {
   const { growers, diaries } = useApp();
   const [limit, setLimit] = useState(10);
 
-  const ranked = rankGrowers(growers, diaries).slice(0, limit);
+  // Удалённых гроверов в рейтинг не берём — так же, как на странице /growers
+  // (там тоже стоит фильтр !g.deleted). Иначе гровер есть в рейтинге, но его нет в списке.
+  const ranked = rankGrowers(growers.filter((g) => !g.deleted), diaries).slice(0, limit);
 
   return (
     <>

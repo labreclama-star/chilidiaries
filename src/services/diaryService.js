@@ -343,6 +343,81 @@ export async function insertWeekReport({ diaryId, title, note, temp, hum, photos
 }
 
 /**
+ * updateWeekReport(reportId, patch) — правка уже опубликованного отчёта.
+ *
+ * patch — любые из полей { title, note, temp, hum } (те же имена, что у
+ * отчёта в state). Что не передано — не трогается. temp/hum: пустое значение
+ * -> null (как в insertWeekReport), "22,5" с запятой тоже принимается.
+ * day_number, report_number, фото здесь не меняются.
+ *
+ * Как и updateDiaryStage: если RLS не пускает (чужой отчёт или нет политики
+ * UPDATE на diary_reports), PostgREST не отдаёт ошибку, а затрагивает 0 строк.
+ * Поэтому просим .select() и проверяем, что строка вернулась.
+ *
+ * Возвращает ok({ title, note, temp, hum }) — сохранённые значения из БД
+ * в той же форме, что у отчёта в state (AppContext мёржит их в week).
+ */
+export async function updateWeekReport(reportId, patch = {}) {
+  try {
+    if (!reportId) return fail(new Error('Не указан отчёт'));
+    const update = {};
+    if (patch.title !== undefined) {
+      const title = String(patch.title ?? '').trim();
+      if (!title) return fail(new Error('Заголовок не может быть пустым'));
+      update.title = title;
+    }
+    if (patch.note !== undefined) {
+      const note = String(patch.note ?? '').trim();
+      if (!note) return fail(new Error('Описание не может быть пустым'));
+      update.note = note;
+    }
+    if (patch.temp !== undefined) update.temp_c = toNumOrNull(patch.temp);
+    if (patch.hum !== undefined) update.humidity = toNumOrNull(patch.hum);
+    if (Object.keys(update).length === 0) return fail(new Error('Нечего сохранять'));
+
+    const { data, error } = await supabase
+      .from('diary_reports')
+      .update(update)
+      .eq('id', reportId)
+      .select('id, title, note, temp_c, humidity')
+      .maybeSingle();
+    if (error) return fail(error);
+    if (!data) return fail(new Error('Не удалось сохранить отчёт: он не найден или нет прав'));
+    return ok({ title: data.title, note: data.note, temp: data.temp_c, hum: data.humidity });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * deleteReportPhoto(reportId, url) — удаляет ОДНО фото отчёта: строку из
+ * diary_photos по паре (diary_report_id, url). Фото в отчёте в state — голые
+ * URL-строки (см. diaryPhotoRowToJs), id строки там нет, поэтому ищем по url.
+ *
+ * Файл в Storage НЕ удаляем: достаточно убрать строку (из отчёта фото
+ * пропадёт). Чистка осиротевших файлов — отдельная задача.
+ *
+ * .select('id') — как у deleteContest: отличаем «удалено» от «RLS молча
+ * отфильтровал 0 строк».
+ */
+export async function deleteReportPhoto(reportId, url) {
+  try {
+    if (!reportId || !url) return fail(new Error('Не указано фото'));
+    const { data, error } = await supabase
+      .from('diary_photos')
+      .delete()
+      .eq('diary_report_id', reportId)
+      .eq('url', url)
+      .select('id');
+    if (error) return fail(error);
+    if (!data || data.length === 0) return fail(new Error('Фото не удалено: не найдено или нет прав'));
+    return ok({ reportId, url });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
  * updateDiaryStage(diaryId, stage) — Этап 3, Группа 3.
  *
  * UPDATE diaries SET stage. RLS (diaries_update_owner_or_admin) пускает

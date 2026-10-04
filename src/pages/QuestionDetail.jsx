@@ -42,6 +42,16 @@ export default function QuestionDetail() {
   const isOwner = !!(currentUser && currentUser.growerId === q.growerId);
   const days = dayCount(q.createdAt);
 
+  // Гровер текущего пользователя — для аватара в форме ответа.
+  const me = currentUser ? growers.find((x) => x.id === currentUser.growerId) : null;
+
+  // Автор ответа: сначала по authorId (надёжно), а если его нет (ответ добавлен
+  // в этой сессии или старые данные) — по имени. Не нашли — вернёт undefined, будут буквы.
+  function findAnswerAuthor(a) {
+    if (a.authorId) return growers.find((x) => x.id === a.authorId);
+    return growers.find((x) => x.name === a.author);
+  }
+
   function handleSubmitAnswer() {
     const text = answerText.trim();
     if (!text) return;
@@ -111,10 +121,10 @@ export default function QuestionDetail() {
         <div className="comments-block">
           <h2 style={{ fontSize: 22, marginBottom: 20 }}>Комментарии от пользователей ({q.answers.length})</h2>
           {q.answers.length
-            ? q.answers.map((a) => <Comment key={a.id} comment={{ author: a.author, text: a.text, time: timeAgo(a.createdAt) }} />)
+            ? q.answers.map((a) => <Comment key={a.id} comment={{ author: a.author, avatar: findAnswerAuthor(a)?.avatar, text: a.text, time: timeAgo(a.createdAt) }} />)
             : <p style={{ color: 'var(--cream-dim)', fontSize: 14, marginBottom: 16 }}>Пока никто не ответил — будь первым.</p>}
           <div className="comment-form">
-            <Avatar name={currentUser ? currentUser.name : 'Гость'} size={34} />
+            <Avatar name={currentUser ? currentUser.name : 'Гость'} photo={me?.avatar} size={34} />
             <textarea
               placeholder={currentUser ? 'Поделись советом или предположением…' : 'Войди, чтобы ответить…'}
               value={answerText}

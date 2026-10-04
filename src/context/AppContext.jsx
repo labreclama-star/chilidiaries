@@ -13,7 +13,8 @@ import {
 import {
   fetchInitialDiaries, insertDiary, insertWeekReport, updateDiaryStage as updateDiaryStageRequest,
   getDiaryById, insertComment,
-  updateDiary as updateDiaryRequest, deleteDiary as deleteDiaryRequest, deleteWeekReport as deleteWeekReportRequest
+  updateDiary as updateDiaryRequest, deleteDiary as deleteDiaryRequest, deleteWeekReport as deleteWeekReportRequest,
+  updateWeekReport as updateWeekReportRequest, deleteReportPhoto as deleteReportPhotoRequest
 } from '../services/diaryService.js';
 import {
   fetchInitialRecipes, insertRecipe, incrementRecipeViewsRpc,
@@ -890,7 +891,8 @@ export function AppProvider({ children }) {
       const { data: week, error, warning } = await insertWeekReport({
         ...reportData,
         diaryId,
-        weekNumber: (target?.weeks.length || 0) + 1
+                  // max+1, а не length+1: после удаления отчёта из середины номера идут с пропуском
+          weekNumber: Math.max(0, ...(target?.weeks || []).map((w) => w.n || 0)) + 1
       });
       if (error) {
         showToast(error.message || 'Не удалось опубликовать отчёт');
@@ -910,6 +912,79 @@ export function AppProvider({ children }) {
       pendingReactionsRef.current.delete(key);
     }
   }, [showToast, diaries, subscribedDiaryIds]);
+
+  /**
+   * Автор правит свой опубликованный отчёт: patch — любые из { title, note, temp, hum }.
+   */
+  const updateWeekReport = useCallback(async (diaryId, reportId, patch) => {
+    const key = `reportEdit:${reportId}`;
+    if (pendingReactionsRef.current.has(key)) return { ok: false };
+    pendingReactionsRef.current.add(key);
+    try {
+      const { data, error } = await updateWeekReportRequest(reportId, patch);
+      if (error) {
+        showToast(error.message || 'Не удалось сохранить отчёт');
+        return { ok: false };
+      }
+      setDiaries((prev) => prev.map((d) => (
+        d.id === diaryId
+          ? { ...d, weeks: d.weeks.map((w) => (w.id === reportId ? { ...w, ...data } : w)) }
+          : d
+      )));
+      showToast('Отчёт обновлён', 'success');
+      return { ok: true };
+    } finally {
+      pendingReactionsRef.current.delete(key);
+    }
+  }, [showToast]);
+
+  /** Автор удаляет свой отчёт целиком. */
+  const deleteWeekReport = useCallback(async (diaryId, reportId) => {
+    if (!currentUser) {
+      showToast('Войди, чтобы удалить отчёт');
+      return { ok: false };
+    }
+    const key = `reportDelete:${reportId}`;
+    if (pendingReactionsRef.current.has(key)) return { ok: false };
+    pendingReactionsRef.current.add(key);
+    try {
+      const { error } = await deleteWeekReportRequest(reportId);
+      if (error) {
+        showToast(error.message || 'Не удалось удалить отчёт');
+        return { ok: false };
+      }
+      setDiaries((prev) => prev.map((d) => (
+        d.id === diaryId ? { ...d, weeks: d.weeks.filter((w) => w.id !== reportId) } : d
+      )));
+      showToast('Отчёт удалён', 'success');
+      return { ok: true };
+    } finally {
+      pendingReactionsRef.current.delete(key);
+    }
+  }, [currentUser, showToast]);
+
+  /** Автор удаляет одно фото из отчёта. */
+  const deleteReportPhoto = useCallback(async (diaryId, reportId, url) => {
+    const key = `reportPhoto:${reportId}`;
+    if (pendingReactionsRef.current.has(key)) return { ok: false };
+    pendingReactionsRef.current.add(key);
+    try {
+      const { error } = await deleteReportPhotoRequest(reportId, url);
+      if (error) {
+        showToast(error.message || 'Не удалось удалить фото');
+        return { ok: false };
+      }
+      setDiaries((prev) => prev.map((d) => (
+        d.id === diaryId
+          ? { ...d, weeks: d.weeks.map((w) => (w.id === reportId ? { ...w, photos: (w.photos || []).filter((p) => p !== url) } : w)) }
+          : d
+      )));
+      showToast('Фото удалено', 'success');
+      return { ok: true };
+    } finally {
+      pendingReactionsRef.current.delete(key);
+    }
+  }, [showToast]);
 
   /**
    * Owner-only: moves a diary to a new growth stage. Reaching "Собран урожай"
@@ -2067,6 +2142,7 @@ export function AppProvider({ children }) {
     varietyVotes, voteVariety,
     contestWins,
     toggleLikeDiary, loadFullDiary, createDiary, addWeekReport, addComment, updateDiaryStage,
+          updateWeekReport, deleteWeekReport, deleteReportPhoto,
     subscribedDiaryIds, toggleDiarySubscription,
     notifications, markNotificationRead, markAllNotificationsRead,
     addRecipe,

@@ -37,6 +37,45 @@ async function heicToJpegBlob(file) {
   return Array.isArray(res) ? res[0] : res;
 }
 
+// Поворот картинки на 90° по часовой через canvas. Принимает data-URL, возвращает новый data-URL.
+// Сразу уменьшаем до ROTATE_MAX_SIDE по длинной стороне: _photo.js всё равно сожмёт фото
+// до 1400 px, а так повёрнутый файл не раздувается и не упирается в лимит 5 МБ.
+// JPEG, а не WebP: Safari не умеет кодировать WebP в canvas.
+const ROTATE_MAX_SIDE = 1600;
+const ROTATE_QUALITY = 0.88;
+
+function rotateDataUrl90(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w0 = img.naturalWidth;
+      const h0 = img.naturalHeight;
+      if (!w0 || !h0) { reject(new Error('У изображения нулевой размер')); return; }
+      const scale = Math.min(1, ROTATE_MAX_SIDE / Math.max(w0, h0));
+      const w = Math.max(1, Math.round(w0 * scale));
+      const h = Math.max(1, Math.round(h0 * scale));
+      // После поворота ширина и высота меняются местами
+      const canvas = document.createElement('canvas');
+      canvas.width = h;
+      canvas.height = w;
+      const ctx = canvas.getContext('2d');
+      // Белая подложка: JPEG не хранит прозрачность
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.translate(canvas.width, 0);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        resolve(canvas.toDataURL('image/jpeg', ROTATE_QUALITY));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error('Браузер не смог декодировать изображение'));
+    img.src = src;
+  });
+}
+
 export default function AddWeekReportForm({ diary }) {
   const { addWeekReport, showToast } = useApp();
   const [title, setTitle] = useState('');
@@ -126,6 +165,29 @@ export default function AddWeekReportForm({ diary }) {
     if (messages.length) showToast(messages.join('. '));
   }
 
+  // Поворачивает превью на 90° по часовой и заменяет его в photos[]. Ищем фото по самой
+  // строке, а не по индексу: пока идёт поворот, список мог измениться (удалили другое фото).
+  async function rotatePhoto(oldSrc) {
+    if (/^data:image\/(gif|svg)/i.test(oldSrc)) {
+      showToast('GIF и SVG повернуть нельзя');
+      return;
+    }
+    changePending(1);
+    try {
+      const newSrc = await rotateDataUrl90(oldSrc);
+      let replaced = false;
+      setPhotos((prev) => prev.map((s) => {
+        if (!replaced && s === oldSrc) { replaced = true; return newSrc; }
+        return s;
+      }));
+    } catch (err) {
+      console.warn('[AddWeekReportForm] не удалось повернуть фото:', err?.message || err);
+      showToast('Не удалось повернуть фото');
+    } finally {
+      changePending(-1);
+    }
+  }
+
   function removePhoto(idx) {
     setPhotos((prev) => prev.filter((_, i) => i !== idx));
   }
@@ -180,6 +242,16 @@ export default function AddWeekReportForm({ diary }) {
             <div key={i} style={{ position: 'relative' }}>
               <img src={src} alt="" />
               <button type="button" className="thumb-remove-btn" onClick={() => removePhoto(i)} aria-label="Удалить фото">&times;</button>
+              {/* Поворот на 90° по часовой; стили кнопки берём у крестика, но ставим её слева */}
+              <button
+                type="button"
+                className="thumb-remove-btn"
+                style={{ right: 'auto', left: -6, background: 'var(--habanero)', border: 'none', cursor: 'pointer' }}
+                onClick={() => rotatePhoto(src)}
+                disabled={busy}
+                aria-label="Повернуть фото на 90°"
+                title="Повернуть на 90°"
+              >&#8635;</button>
             </div>
           ))}
         </div>

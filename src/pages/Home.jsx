@@ -8,13 +8,6 @@ import { TESTIMONIALS } from '../data/testimonials.js';
 import { PHOTOS } from '../data/photos.js';
 import { fmtNum } from '../utils/helpers.js';
 
-const STATS = [
-  { count: 1284, label: 'Дневников' },
-  { count: 742, label: 'Гроверов' },
-  { count: 356, label: 'Собрано урожаев' },
-  { count: 46, label: 'Сортов в каталоге' }
-];
-
 const FEATURES = [
   { icon: '🌱', color: 'green', title: 'Шаг за шагом', text: 'Фиксируй каждый этап от семечки до урожая' },
   { icon: '📊', color: 'orange', title: 'Сравнивай', text: 'Сравнивай свой гров со средними показателями' },
@@ -44,7 +37,17 @@ function CountUpStat({ target, label }) {
 }
 
 export default function Home() {
-  const { diaries, varieties, openWizard, settings } = useApp();
+  const { diaries, growers, varieties, openWizard, settings } = useApp();
+
+  // Цифры в hero — реальные, из state (раньше были захардкожены).
+  // Гроверов считаем без удалённых: на странице /growers они скрыты.
+  const growersCount = growers.filter((g) => !g.deleted).length;
+  const stats = [
+    { count: diaries.length, label: 'Дневников' },
+    { count: growersCount, label: 'Гроверов' },
+    { count: diaries.filter((d) => d.stage === 'Собран урожай').length, label: 'Собрано урожаев' },
+    { count: varieties.length, label: 'Сортов в каталоге' }
+  ];
 
   const trending = diaries.slice().sort((a, b) => b.likes - a.likes).slice(0, 3);
   const featuredVarieties = varieties.filter((v) => v.photo).concat(varieties.filter((v) => !v.photo)).slice(0, 7);
@@ -93,7 +96,7 @@ export default function Home() {
               <a href="/diaries" className="btn btn-outline">Смотреть дневники</a>
             </div>
             <div className="hero-stats">
-              {STATS.map((s) => <CountUpStat key={s.label} target={s.count} label={s.label} />)}
+              {stats.map((s) => <CountUpStat key={s.label} target={s.count} label={s.label} />)}
             </div>
           </div>
         </div>
@@ -174,7 +177,7 @@ export default function Home() {
           <div className="gauge-card" style={{ borderRadius: 24, padding: 48, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
             <div>
               <h2 className="section-title" style={{ margin: '0 0 8px' }}>Готов вырастить свой <em>Reaper</em>?</h2>
-              <p className="section-sub">Присоединяйся к 742 гроверам, которые уже документируют свой сезон.</p>
+              <p className="section-sub">Присоединяйся к {growersCount} гроверам, которые уже документируют свой сезон.</p>
             </div>
             <button className="btn btn-primary" onClick={openWizard}>Начать дневник бесплатно</button>
           </div>
