@@ -78,6 +78,16 @@ export default function App() {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
 
+  // Один раз при запуске приложения отключаем встроенное «восстановление прокрутки»
+  // браузера. Иначе при «Назад» браузер сам возвращает страницу на прежнее место
+  // и перебивает наш ScrollToTop. Пустой массив зависимостей = выполняется только раз.
+  // Стоит ДО раннего return ниже — хуки нельзя вызывать условно.
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+  }, []);
+
   if (loading) {
     // Data "fetch" (mock today, real Supabase call tomorrow) is in flight.
     return (
