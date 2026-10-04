@@ -39,7 +39,7 @@ async function heicToJpegBlob(file) {
 
 // Поворот картинки на 90° по часовой через canvas. Принимает data-URL, возвращает новый data-URL.
 // Сразу уменьшаем до ROTATE_MAX_SIDE по длинной стороне: _photo.js всё равно сожмёт фото
-// до 1400 px, а так повёрнутый файл не раздувается и не упирается в лимит 5 МБ.
+// до 1400 px, а так повёрнутый файл не раздувается и не упирается в лимит 10 МБ.
 // JPEG, а не WebP: Safari не умеет кодировать WebP в canvas.
 const ROTATE_MAX_SIDE = 1600;
 const ROTATE_QUALITY = 0.88;
