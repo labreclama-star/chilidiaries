@@ -264,6 +264,7 @@ export function answerRowToJs(row) {
   return {
     id: row.id,
     author: row.author?.name ?? 'Гровер',
+ authorId: row.author_id ?? null,
     text: row.text_content,
     createdAt: row.created_at
   };

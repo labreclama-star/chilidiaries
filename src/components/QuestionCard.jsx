@@ -37,7 +37,8 @@ export default function QuestionCard({ question }) {
           {question.text.length > 140 ? `${question.text.slice(0, 140)}…` : question.text}
         </h3>
         <div className="card-meta">
-          {g && <Avatar name={g.name} size={20} />}
+          {/* photo — аватар гровера; без него Avatar рисует только буквы */}
+          {g && <Avatar name={g.name} photo={g.avatar} size={20} />}
           <span>{g?.name}</span>
           <span>·</span>
           <span>{timeAgo(question.createdAt)}</span>
