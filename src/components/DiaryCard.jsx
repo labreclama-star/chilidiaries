@@ -26,7 +26,8 @@ export default function DiaryCard({ diary }) {
       <div className="card-body">
         <Link to={`/diaries/${diary.id}`}><h3 style={{ cursor: 'pointer' }}>{diary.title}</h3></Link>
         <div className="card-meta">
-          <Avatar name={g.name} size={22} />
+          {/* photo — аватар гровера; без него Avatar рисует только буквы */}
+          <Avatar name={g.name} photo={g.avatar} size={22} />
           <span>{g.name}</span><span>·</span><span>{varietyNames(diary, findVariety)}</span>
         </div>
         {diary.desc && (

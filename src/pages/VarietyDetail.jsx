@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext.jsx';
 import PepperIcon from '../components/PepperIcon.jsx';
+import Avatar from '../components/Avatar.jsx';
 import DiaryCard from '../components/DiaryCard.jsx';
 import StarRating from '../components/StarRating.jsx';
 import VarietyRatingBlock from '../components/VarietyRatingBlock.jsx';
@@ -12,7 +13,7 @@ import { useSeoMeta } from '../hooks/useSeoMeta.js';
 
 export default function VarietyDetail() {
   const { id } = useParams();
-  const { varieties, diaries, varietyVotes } = useApp();
+  const { varieties, diaries, varietyVotes, growers } = useApp();
   const v = varieties.find((x) => x.id === id);
 
   // SEO: title / description / canonical / og-теги страницы сорта.
@@ -39,6 +40,11 @@ export default function VarietyDetail() {
   const growingDiaries = diaries.filter((d) => d.varietyId === v.id || (d.varietyIds && d.varietyIds.includes(v.id)));
   const insight = varietyProgressInsight(v.id, diaries);
   const communityRatings = computeVarietyRatings(v, varietyVotes);
+
+  // Автор сорта: в данных сорта addedById — uuid гровера, addedBy — имя.
+  // Ищем гровера по id (оттуда аватар и ссылка на профиль); не нашли — только имя.
+  const author = v.userAdded && v.addedById ? growers.find((x) => x.id === v.addedById) : null;
+  const authorName = author ? author.name : (v.addedBy || 'гровер ChiliDiaries');
 
   return (
     <div className="wrap" style={{ paddingTop: 36, paddingBottom: 70 /* бока — из .wrap */ }}>
@@ -97,7 +103,14 @@ export default function VarietyDetail() {
           {v.userAdded && (
             <div className="side-card">
               <h4>Добавлено сообществом</h4>
-              <p style={{ fontSize: 13, color: 'var(--cream-dim)' }}>Автор: {v.addedBy || 'гровер ChiliDiaries'}</p>
+              <Link
+                to={author ? `/growers/${author.id}` : '#'}
+                className="grower-line"
+                style={{ textDecoration: 'none', margin: '4px 0 0' }}
+              >
+                <Avatar name={authorName} photo={author?.avatar} size={34} />
+                <div><b>{authorName}</b></div>
+              </Link>
             </div>
           )}
         </aside>

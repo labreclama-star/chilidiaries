@@ -1,20 +1,12 @@
-import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Avatar from './Avatar.jsx';
 import PepperIcon from './PepperIcon.jsx';
 import Badge from './Badge.jsx';
-import Lightbox from './Lightbox.jsx';
 import { useApp } from '../context/AppContext.jsx';
 import { heatColor } from '../utils/helpers.js';
 
-// У карточки одно фото, листать нечего — Lightbox всё равно требует onIndexChange.
-const noop = () => {};
-
 export default function ArticleCard({ post }) {
   const { varieties, growers } = useApp();
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const closeLightbox = useCallback(() => setLightboxOpen(false), []);
-
   const v = post.varietyId ? varieties.find((x) => x.id === post.varietyId) : null;
   const color = v ? heatColor((v.shuMin + v.shuMax) / 2) : '#F2A93B';
   const g = growers.find((x) => x.id === post.growerId);
@@ -22,22 +14,9 @@ export default function ArticleCard({ post }) {
     ? { backgroundImage: `url('${post.photo}')`, backgroundSize: 'cover', backgroundPosition: 'center' }
     : { background: `radial-gradient(circle at 30% 20%,${color}33,var(--soil-900) 70%)` };
 
-  // Клик по обложке с фото открывает лайтбокс, а не ведёт на страницу статьи.
-  // Без фото (иконка перца) обложка остаётся обычной ссылкой.
-  function handleCoverClick(e) {
-    if (!post.photo) return;
-    e.preventDefault();
-    setLightboxOpen(true);
-  }
-
   return (
     <div className="card">
-      <Link
-        to={`/blog/${post.id}`}
-        className="pod-media"
-        style={{ ...mediaStyle, cursor: post.photo ? 'zoom-in' : 'pointer' }}
-        onClick={handleCoverClick}
-      >
+      <Link to={`/blog/${post.id}`} className="pod-media" style={{ ...mediaStyle, cursor: 'pointer' }}>
         {post.status === 'pending' && <Badge kind="stage">На модерации</Badge>}
         {!post.photo && <PepperIcon color={color} />}
       </Link>
@@ -69,11 +48,6 @@ export default function ArticleCard({ post }) {
           </div>
         </div>
       </div>
-      {/* Лайтбокс стоит рядом со ссылками, а не внутри них: иначе его закрытие
-          «всплыло» бы как клик по ссылке и увело на страницу статьи. */}
-      {lightboxOpen && post.photo && (
-        <Lightbox photos={[post.photo]} index={0} onClose={closeLightbox} onIndexChange={noop} />
-      )}
     </div>
   );
 }

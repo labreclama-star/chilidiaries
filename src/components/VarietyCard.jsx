@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PepperIcon from './PepperIcon.jsx';
+import Avatar from './Avatar.jsx';
 import Badge from './Badge.jsx';
 import StarRating from './StarRating.jsx';
 import { MiniHeatGauge } from './HeatGauge.jsx';
@@ -9,10 +10,18 @@ import { computeVarietyRatings } from '../utils/varietyRatings.js';
 import { useApp } from '../context/AppContext.jsx';
 
 export default function VarietyCard({ variety }) {
-  const { varietyVotes } = useApp();
+  const { varietyVotes, growers } = useApp();
   const avgShu = (variety.shuMin + variety.shuMax) / 2;
   const color = heatColor(avgShu);
   const ratings = computeVarietyRatings(variety, varietyVotes);
+
+  // Автор сорта (только для сортов «от сообщества»). В данных сорта addedById —
+  // uuid гровера, addedBy — имя. Гровера ищем по id: так подтянется его аватар.
+  // Если гровера в списке нет (например, удалён) — показываем имя из addedBy без фото.
+  const author = variety.userAdded && variety.addedById
+    ? growers.find((x) => x.id === variety.addedById)
+    : null;
+  const authorName = author ? author.name : (variety.userAdded ? variety.addedBy : null);
 
   // Описание в превью обрезано до 5 строк (CSS .variety-desc). Кнопку «Показать
   // полностью» показываем, только если текст реально не влез: сравниваем полную
@@ -51,6 +60,13 @@ export default function VarietyCard({ variety }) {
           <Badge>Сложность: {variety.difficulty}</Badge>
           <Badge>{variety.days} дн.</Badge>
         </div>
+        {/* Строка автора — обычный div, а не ссылка: вся карточка уже <Link>, вложенные ссылки нельзя */}
+        {authorName && (
+          <div className="card-meta">
+            <Avatar name={authorName} photo={author?.avatar} size={20} />
+            <span>{authorName}</span>
+          </div>
+        )}
       </div>
     </Link>
   );

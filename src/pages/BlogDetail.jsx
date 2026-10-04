@@ -78,7 +78,8 @@ export default function BlogDetail() {
       </div>
       <h1 className="detail-title" style={{ marginBottom: 14 }}>{p.title}</h1>
       <Link to={g ? `/growers/${g.id}` : '#'} className="grower-line" style={{ textDecoration: 'none' }}>
-        <Avatar name={g ? g.name : 'ChiliDiaries'} size={34} />
+        {/* photo — аватар гровера; без него Avatar рисует только буквы */}
+        <Avatar name={g ? g.name : 'ChiliDiaries'} photo={g?.avatar} size={34} />
         <div>
           <b>{g ? g.name : 'ChiliDiaries'}</b>
           <span>{new Date(p.date).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })}</span>

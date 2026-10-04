@@ -38,7 +38,8 @@ export default function RecipeCard({ recipe }) {
           {recipe.desc.length > 90 ? `${recipe.desc.slice(0, 90)}…` : recipe.desc}
         </p>
         <div className="card-meta">
-          {g && <Avatar name={g.name} size={20} />}
+          {/* photo — аватар гровера; без него Avatar рисует только буквы */}
+          {g && <Avatar name={g.name} photo={g.avatar} size={20} />}
           <span>{g?.name}</span>
           {v && <><span>·</span><span>{v.name}</span></>}
         </div>
