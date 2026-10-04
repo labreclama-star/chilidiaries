@@ -22,6 +22,8 @@
 //   HEIC/HEIF                  → конвертируем в JPEG через heic2any, затем сжимаем; не вышло — как есть + toast
 //   что-то ещё                 → { url: null, error }
 //   файл > 5 МБ                → { url: null, error: 'Файл больше 5 МБ' }
+//                                (у этой ошибки есть доп. поля code='TOO_BIG' и
+//                                sizeBytes — размер файла в байтах, см. tooBigError)
 //
 // Для отображения (а не загрузки) есть photoDisplayUrl — см. в конце файла.
 
@@ -35,6 +37,20 @@ const BUCKET = 'photos';
 // в настройках самого bucket (Storage → photos → Edit bucket → file size limit).
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const TOO_BIG_MESSAGE = 'Файл больше 5 МБ';
+
+// Машинная метка ошибки «файл слишком большой». Другие сервисы читают только
+// error.message — он остаётся прежним. Кто хочет точнее (например, diaryService),
+// проверяет error.code === TOO_BIG_CODE и берёт error.sizeBytes.
+export const TOO_BIG_CODE = 'TOO_BIG';
+
+// Собирает ошибку «слишком большой файл»: текст прежний, плюс code и sizeBytes.
+// sizeBytes — размер в байтах (для data URL это оценка); null, если размер неизвестен.
+function tooBigError(sizeBytes) {
+  const err = new Error(TOO_BIG_MESSAGE);
+  err.code = TOO_BIG_CODE;
+  err.sizeBytes = Number.isFinite(sizeBytes) ? Math.round(sizeBytes) : null;
+  return err;
+}
 
 // Параметры сжатия перед загрузкой.
 // maxSizeMB — цель, а не гарантия: библиотека снижает качество итерациями,
@@ -323,7 +339,8 @@ async function toBlob(input) {
     if (/^data:/i.test(str)) {
       // base64 в ~1.33 раза длиннее исходных байт. Явно огромную строку
       // отсекаем до atob(), точную проверку по blob.size делает uploadPhoto.
-      if (str.length > MAX_PHOTO_BYTES * 1.4) throw new Error(TOO_BIG_MESSAGE);
+      // Размер здесь оценочный: длина строки × 0.75 (base64 → байты).
+      if (str.length > MAX_PHOTO_BYTES * 1.4) throw tooBigError(str.length * 0.75);
       return { blob: dataUrlToBlob(str), name: '' };
     }
     if (/^blob:/i.test(str)) {
@@ -368,7 +385,7 @@ export async function uploadPhoto(input) {
 
     // Проверки — по исходнику, ДО сжатия: пустой файл, лимит, тип.
     if (!original.size) throw new Error('Пустой файл');
-    if (original.size > MAX_PHOTO_BYTES) throw new Error(TOO_BIG_MESSAGE);
+    if (original.size > MAX_PHOTO_BYTES) throw tooBigError(original.size);
     if (original.type && !original.type.startsWith('image/')) {
       throw new Error('В bucket photos можно загружать только изображения');
     }
@@ -380,8 +397,9 @@ export async function uploadPhoto(input) {
     const { blob, note } = await compressBlob(original, tag, origName, realType);
     console.log(`[photo ${tag}] после сжатия: ${blob === original ? 'ОРИГИНАЛ (сжатие не сработало или не нужно)' : 'сжато'}, ${mb(original.size)} → ${mb(blob.size)}, type=${blob.type}`);
     // Страховка: после сжатия файл не должен превышать лимит (на случай,
-    // если сжатие не сработало и вернулся оригинал).
-    if (blob.size > MAX_PHOTO_BYTES) throw new Error(TOO_BIG_MESSAGE);
+    // если сжатие не сработало и вернулся оригинал). Размер берём исходный —
+    // именно его пользователь видит у себя на диске.
+    if (blob.size > MAX_PHOTO_BYTES) throw tooBigError(original.size);
 
     // Уникальный путь: время + случайная строка + расширение по итоговому MIME
     // (после сжатия — .webp).

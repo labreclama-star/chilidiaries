@@ -17,7 +17,7 @@
 import { buildInitialDiaries } from '../data/diaries.js';
 import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
-import { photoUrlForDb } from './_photo.js';
+import { photoUrlForDb, uploadPhoto, TOO_BIG_CODE } from './_photo.js';
 import { diaryRowToJs, diaryListRowToJs, diaryReportRowToJs, commentRowToJs } from './supabase/mappers.js';
 import { PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 
@@ -75,14 +75,45 @@ function localDateISO(d = new Date()) {
 // по 2 фото разом. Причина: 8 одновременных загрузок перегружают канал, часть
 // соединений рвётся с ERR_HTTP2_PROTOCOL_ERROR, и фото теряются. Порядок
 // результатов сохраняется (position = индекс в diary_photos).
+//
+// Возвращает массив { url, error, slot } В ТОМ ЖЕ ПОРЯДКЕ, что и photos.
+// slot — номер фото в форме (индекс в исходном массиве + 1). Вместо photoUrlForDb
+// зовём uploadPhoto напрямую, чтобы не терять причину ошибки (code/sizeBytes
+// из _photo.js).
 async function uploadPhotosLimited(photos, limit = 2) {
   const results = [];
   for (let i = 0; i < photos.length; i += limit) {
     const batch = photos.slice(i, i + limit);
-    const batchResults = await Promise.all(batch.map((p) => photoUrlForDb(p, 'diaryService')));
+    const batchResults = await Promise.all(
+      batch.map(async (p, j) => {
+        const { url, error } = await uploadPhoto(p);
+        if (error) {
+          console.warn('[diaryService] фото не загружено в Storage, в photo_url не отправляется:', error.message || error);
+        }
+        return { url, error, slot: i + j + 1 };
+      })
+    );
     results.push(...batchResults);
   }
   return results;
+}
+
+// Собирает текст warning по неудачным загрузкам (элементы { slot, error }).
+// Для «слишком большого» фото — точное сообщение с номером и размером,
+// для остальных причин — отдельная честная строка (без упоминания 5 МБ).
+function buildPhotoWarning(failed) {
+  const parts = failed.map(({ slot, error }) => {
+    if (error && error.code === TOO_BIG_CODE) {
+      if (error.sizeBytes) {
+        // Округляем вверх до 0.1 МБ, чтобы 5.04 МБ не превратилось в «5.0 МБ» при лимите 5
+        const sizeMb = (Math.ceil((error.sizeBytes / 1024 / 1024) * 10) / 10).toFixed(1);
+        return `Фото ${slot}: ${sizeMb} МБ, пропущено (лимит 5 МБ)`;
+      }
+      return `Фото ${slot}: пропущено (лимит 5 МБ)`;
+    }
+    return `Фото ${slot}: не удалось загрузить`;
+  });
+  return `Отчёт опубликован, но не все фото загружены. ${parts.join('; ')}`;
 }
 
 // Этап 3, Группа C (с правкой после проверки DiaryCard.jsx): сначала
@@ -277,14 +308,18 @@ export async function insertWeekReport({ diaryId, title, note, temp, hum, photos
     // (8 одновременных загрузок рвутся с ERR_HTTP2_PROTOCOL_ERROR).
     // Порядок сохраняется → position = индекс.
     const photoList = (Array.isArray(photos) ? photos : []).filter(Boolean); // пустые слоты формы не считаем
-    const urls = (await uploadPhotosLimited(photoList, 2)).filter(Boolean);
+    const uploadResults = await uploadPhotosLimited(photoList, 2);
+    // position в diary_photos считается ниже по этому списку (0, 1, 2…) — только
+    // по успешным загрузкам, поэтому пропущенное фото не оставляет «дыр» в порядке.
+    const urls = uploadResults.filter((r) => r.url).map((r) => r.url);
 
     let photoRows = [];
     let warning = null;
     // Часть фото не дошла до Storage (файл >5 МБ, сеть и т.п.) — отчёт всё равно
     // сохраняем, но говорим об этом пользователю (тот же канал warning, что ниже).
-    if (urls.length < photoList.length) {
-      warning = 'Отчёт опубликован, но не все фото удалось загрузить (максимум 5 МБ на файл)';
+    const failed = uploadResults.filter((r) => !r.url);
+    if (failed.length > 0) {
+      warning = buildPhotoWarning(failed);
     }
     if (urls.length > 0) {
       const { data: inserted, error: photosError } = await supabase
