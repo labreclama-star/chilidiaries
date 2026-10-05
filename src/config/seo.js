@@ -4,7 +4,7 @@
 
 // Адрес сайта. Когда купим chilidiaries.ru — меняем ТОЛЬКО эту строку.
 // Без слэша в конце!
-export const baseUrl = 'https://chilidiaries.pages.dev';
+export const baseUrl = 'https://chilidiaries.ru';
 
 // Название сайта и суффикс для заголовков вкладок:
 // «Habanero — 350 000 SHU | ChiliDiaries». Хотите без суффикса — поставьте ''.
