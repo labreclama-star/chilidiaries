@@ -173,6 +173,15 @@ export default function DiaryDetail() {
             >
               ⭳ Экспорт в PDF
             </button>
+            {/* Редактирование самого дневника (название, описание, обложка…) — только автору */}
+            {isOwner && (
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => openModal('editDiary', { diaryId: d.id })}
+              >
+                ✎ Редактировать дневник
+              </button>
+            )}
             {!isOwner && (
               <button
                 className={'btn btn-sm' + (subscribedDiaryIds.includes(d.id) ? ' btn-outline active' : ' btn-outline')}

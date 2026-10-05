@@ -12,6 +12,7 @@ import BackButton from './components/BackButton.jsx';
 
 import AuthModal from './components/AuthModal.jsx';
 import EditProfileModal from './components/EditProfileModal.jsx';
+import EditDiaryModal from './components/EditDiaryModal.jsx';
 import CreateDiaryWizard from './components/CreateDiaryWizard.jsx';
 import AddVarietyModal from './components/AddVarietyModal.jsx';
 import AddRecipeModal from './components/AddRecipeModal.jsx';
@@ -163,6 +164,7 @@ export default function App() {
           the wizard without losing progress. */}
 <AuthModal />
 <EditProfileModal />
+<EditDiaryModal />
 <CreateDiaryWizard />
 <AddVarietyModal />
 <AddRecipeModal />

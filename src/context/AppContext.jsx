@@ -2167,7 +2167,7 @@ export function AppProvider({ children }) {
     addVariety,
     varietyVotes, voteVariety,
     contestWins,
-    toggleLikeDiary, loadFullDiary, createDiary, addWeekReport, addComment, updateDiaryStage,
+        toggleLikeDiary, loadFullDiary, createDiary, addWeekReport, addComment, updateDiaryStage, updateDiary,
                     updateWeekReport, deleteWeekReport, deleteReportPhoto, addReportPhotos,
     subscribedDiaryIds, toggleDiarySubscription,
     notifications, markNotificationRead, markAllNotificationsRead,
@@ -2181,6 +2181,31 @@ export function AppProvider({ children }) {
 
     // ---- админ ----
     adminAddVariety, adminUpdateVariety, adminDeleteVariety, countDiariesUsingVariety,
+      /**
+   * updateDiary(id, patch) — редактирование СВОЕГО дневника автором.
+   */
+  const updateDiary = useCallback(async (id, patch) => {
+    const diary = diaries.find((x) => x.id === id);
+    if (!currentUser || !diary || diary.growerId !== currentUser.growerId) {
+      showToast('Редактировать дневник может только его автор');
+      return { ok: false };
+    }
+    const { data: d, error } = await updateDiaryRequest(id, patch);
+    if (error) {
+      showToast(error.message || 'Не удалось обновить дневник');
+      return { ok: false };
+    }
+    setDiaries((prev) => prev.map((x) => {
+      if (x.id !== id) return x;
+      const next = { ...x, ...patch };
+      if (patch.coverPhoto !== undefined) next.coverPhoto = d ? d.coverPhoto : x.coverPhoto;
+      return next;
+    }));
+    const photoDropped = patch.coverPhoto !== undefined && !!patch.coverPhoto && d && !d.coverPhoto;
+    showToast(photoDropped ? 'Дневник обновлён, но фото не загрузилось' : 'Дневник обновлён', 'success');
+    return { ok: true };
+  }, [diaries, currentUser, showToast]);
+
     adminUpdateDiary, adminDeleteWeekReport, adminDeleteDiary,
     adminSetGrowerRole, adminSetGrowerBanned, adminSetGrowerDeleted, adminDeleteGrower,
     adminAddRecipe, adminUpdateRecipe, adminDeleteRecipe, adminToggleRecipeHidden,
