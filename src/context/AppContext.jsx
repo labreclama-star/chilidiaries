@@ -14,7 +14,8 @@ import {
   fetchInitialDiaries, insertDiary, insertWeekReport, updateDiaryStage as updateDiaryStageRequest,
   getDiaryById, insertComment,
   updateDiary as updateDiaryRequest, deleteDiary as deleteDiaryRequest, deleteWeekReport as deleteWeekReportRequest,
-  updateWeekReport as updateWeekReportRequest, deleteReportPhoto as deleteReportPhotoRequest
+    updateWeekReport as updateWeekReportRequest, deleteReportPhoto as deleteReportPhotoRequest,
+  addReportPhotos as addReportPhotosRequest
 } from '../services/diaryService.js';
 import {
   fetchInitialRecipes, insertRecipe, incrementRecipeViewsRpc,
@@ -981,6 +982,31 @@ export function AppProvider({ children }) {
       )));
       showToast('Фото удалено', 'success');
       return { ok: true };
+    } finally {
+      pendingReactionsRef.current.delete(key);
+    }
+  }, [showToast]);
+  /**
+   * Автор добавляет новые фото к уже опубликованному отчёту.
+   */
+  const addReportPhotos = useCallback(async (diaryId, reportId, files) => {
+    const key = `reportPhotoAdd:${reportId}`;
+    if (pendingReactionsRef.current.has(key)) return { ok: false };
+    pendingReactionsRef.current.add(key);
+    try {
+      const { data: urls, error, warning } = await addReportPhotosRequest(reportId, files);
+      if (error) {
+        showToast(error.message || 'Не удалось добавить фото');
+        return { ok: false };
+      }
+      setDiaries((prev) => prev.map((d) => (
+        d.id === diaryId
+          ? { ...d, weeks: d.weeks.map((w) => (w.id === reportId ? { ...w, photos: [...(w.photos || []), ...urls] } : w)) }
+          : d
+      )));
+      if (warning) showToast(warning);
+      else showToast(urls.length === 1 ? 'Фото добавлено' : `Фото добавлены: ${urls.length}`, 'success');
+      return { ok: true, urls };
     } finally {
       pendingReactionsRef.current.delete(key);
     }
@@ -2142,7 +2168,7 @@ export function AppProvider({ children }) {
     varietyVotes, voteVariety,
     contestWins,
     toggleLikeDiary, loadFullDiary, createDiary, addWeekReport, addComment, updateDiaryStage,
-          updateWeekReport, deleteWeekReport, deleteReportPhoto,
+                    updateWeekReport, deleteWeekReport, deleteReportPhoto, addReportPhotos,
     subscribedDiaryIds, toggleDiarySubscription,
     notifications, markNotificationRead, markAllNotificationsRead,
     addRecipe,

@@ -9,11 +9,13 @@ import { stageColorMap } from '../utils/helpers.js';
 // diaryId и canEdit приходят из DiaryDetail: canEdit = текущий пользователь — автор дневника.
 // Без них (или без week.id) карточка отчёта выглядит и работает как раньше, без кнопок правки.
 export default function WeekItem({ week, diaryColor, diaryId, canEdit }) {
-  const { updateWeekReport, deleteWeekReport, deleteReportPhoto, showToast } = useApp();
+  const { updateWeekReport, deleteWeekReport, deleteReportPhoto, addReportPhotos, showToast } = useApp();
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ title: '', note: '', temp: '', hum: '' });
   const [busy, setBusy] = useState(false);
+  // Идёт загрузка новых фото (busy при этом тоже true — блокирует остальные кнопки)
+  const [uploading, setUploading] = useState(false);
 
   const wc = (stageColorMap[week.stage] ?? diaryColor) || diaryColor;
   const photos = week.photos && week.photos.length ? week.photos : (week.photo ? [week.photo] : []);
@@ -73,6 +75,25 @@ export default function WeekItem({ week, diaryColor, diaryId, canEdit }) {
     }
   }
 
+  // Добавление новых фото к опубликованному отчёту. Загрузка, сжатие, ретрай и
+  // запись в БД — в addReportPhotos (AppContext → diaryService). Ошибки и успех
+  // показывает toast оттуда; миниатюры обновятся сами, когда AppContext
+  // допишет URL в week.photos.
+  async function handleAddPhotos(e) {
+    const files = Array.from(e.target.files || []);
+    // Сбрасываем input, иначе повторный выбор того же файла не вызовет onChange
+    e.target.value = '';
+    if (files.length === 0) return;
+    setBusy(true);
+    setUploading(true);
+    try {
+      await addReportPhotos(diaryId, week.id, files);
+    } finally {
+      setUploading(false);
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="week-item" id={`report-day-${week.day || week.n}`}>
       <span className="week-date">День {week.day || week.n} · {week.date}</span>
@@ -119,6 +140,26 @@ export default function WeekItem({ week, diaryColor, diaryId, canEdit }) {
         </div>
       )}
 
+      {/* Добавление фото к уже опубликованному отчёту — только в режиме правки.
+          Файлы уходят на загрузку сразу после выбора (отдельной кнопки нет). */}
+      {editing && (
+        <div className="field" style={{ marginTop: 8 }}>
+          <label>Добавить фото</label>
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={handleAddPhotos}
+            disabled={busy}
+          />
+          {uploading && (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Spinner size={14} /> <span>Загружаю фото…</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {editing ? (
         <>
           <div className="field-row">
@@ -131,7 +172,7 @@ export default function WeekItem({ week, diaryColor, diaryId, canEdit }) {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} disabled={busy}>
-              {busy ? (<><Spinner size={14} /> Сохраняю…</>) : 'Сохранить'}
+              {busy && !uploading ? (<><Spinner size={14} /> Сохраняю…</>) : 'Сохранить'}
             </button>
             <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(false)} disabled={busy}>Отмена</button>
           </div>

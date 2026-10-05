@@ -11,6 +11,10 @@
 // WebP в canvas не кодирует — молча отдаёт огромный PNG, см. canEncodeWebp).
 // Так экономим место и исходящий трафик Supabase, а форма грузится быстрее.
 //
+// Сама загрузка в Storage делается с автоматическим ретраем: до 3 попыток,
+// между ними пауза 1 с, затем 2 с (см. UPLOAD_ATTEMPTS). Нужно, потому что
+// часть запросов падает с ERR_HTTP2_PROTOCOL_ERROR / Failed to fetch.
+//
 // Что умеет принимать uploadPhoto:
 //   null / undefined / ''      → { url: null,  error: null }
 //   'http(s)://...'            → { url: <как есть>, error: null }  (НЕ сжимаем)
@@ -69,6 +73,13 @@ const CANVAS_QUALITY = 0.65; // запасной путь без библиот�
 // тратила на такой файл (~30 КБ) по 5-6 секунд впустую. Грузим как есть.
 // Граница строгая: ровно 200 КБ и больше — уже идут в сжатие.
 const SKIP_COMPRESS_BELOW_BYTES = 200 * 1024;
+
+// Ретрай загрузки в Storage. Всего попыток (включая первую) и шаг паузы:
+// после неудачи №1 ждём 1 с, после №2 — 2 с (пауза = номер неудачной попытки × шаг).
+const UPLOAD_ATTEMPTS = 3;
+const UPLOAD_RETRY_STEP_MS = 1000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const mb = (bytes) => (bytes / 1024 / 1024).toFixed(2) + ' МБ';
 
@@ -354,6 +365,19 @@ async function toBlob(input) {
   );
 }
 
+// Имеет ли смысл повторять загрузку после этой ошибки.
+// Сетевые сбои (ERR_HTTP2_PROTOCOL_ERROR, Failed to fetch) приходят без HTTP-статуса
+// или с 5xx — их повторяем. Явные ответы сервера 4xx (нет прав, неверный bucket,
+// файл слишком большой и т.п.) от повтора не изменятся — не тратим время.
+// Исключения: 408 (таймаут) и 429 (лимит запросов) — повторяем.
+function isRetryableUploadError(err) {
+  const raw = err?.statusCode ?? err?.status;
+  const status = Number(raw);
+  if (!Number.isFinite(status) || status === 0) return true; // сети нет / обрыв
+  if (status === 408 || status === 429) return true;
+  return status >= 500;
+}
+
 /**
  * Загружает фото в Storage и возвращает публичный URL.
  * Никогда не бросает исключений — всегда { url, error }.
@@ -401,21 +425,45 @@ export async function uploadPhoto(input) {
     // именно его пользователь видит у себя на диске.
     if (blob.size > MAX_PHOTO_BYTES) throw tooBigError(original.size);
 
-    // Уникальный путь: время + случайная строка + расширение по итоговому MIME
-    // (после сжатия — .webp).
-    const rand = Math.random().toString(36).slice(2, 10);
-    const path = `${Date.now()}-${rand}.${extForMime(blob.type)}`;
+    // Загрузка в Storage с ретраем (до UPLOAD_ATTEMPTS попыток).
+    // Путь уникален: время + случайная строка + расширение по итоговому MIME
+    // (после сжатия — .webp). На КАЖДОЙ попытке путь новый: при обрыве HTTP/2
+    // файл мог на самом деле долететь до сервера, и повтор в тот же путь
+    // (upsert: false) упал бы с «already exists». Цена — возможный «сирота»
+    // в bucket от неудавшейся попытки (редко и безвредно).
+    let path = '';
+    let uploadError = null;
+    for (let attempt = 1; attempt <= UPLOAD_ATTEMPTS; attempt++) {
+      const rand = Math.random().toString(36).slice(2, 10);
+      path = `${Date.now()}-${rand}.${extForMime(blob.type)}`;
 
-    console.time(`[photo ${tag}] upload`); // ВРЕМЕННО: только сама загрузка в Storage
-    let uploadError;
-    try {
-      ({ error: uploadError } = await supabase.storage.from(BUCKET).upload(path, blob, {
-        contentType: blob.type || undefined,
-        cacheControl: '31536000', // путь уникален, файл не меняется → кэшируем надолго
-        upsert: false,
-      }));
-    } finally {
-      console.timeEnd(`[photo ${tag}] upload`);
+      console.time(`[photo ${tag}] upload #${attempt}`); // ВРЕМЕННО: только сама загрузка в Storage
+      try {
+        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
+          contentType: blob.type || undefined,
+          cacheControl: '31536000', // путь уникален, файл не меняется → кэшируем надолго
+          upsert: false,
+        });
+        uploadError = error || null;
+      } catch (e) {
+        // supabase-js обычно возвращает ошибку, но на сетевом сбое может и бросить
+        uploadError = e instanceof Error ? e : new Error(String(e));
+      } finally {
+        console.timeEnd(`[photo ${tag}] upload #${attempt}`);
+      }
+
+      if (!uploadError) break; // успех
+
+      const isLast = attempt === UPLOAD_ATTEMPTS;
+      if (isLast || !isRetryableUploadError(uploadError)) {
+        console.warn(`[photo ${tag}] upload не удался (попытка ${attempt}/${UPLOAD_ATTEMPTS}): ${uploadError.message || uploadError}`);
+        break; // вернём ошибку как раньше
+      }
+
+      // Пауза с нарастанием: 1 с после 1-й неудачи, 2 с после 2-й
+      const delayMs = attempt * UPLOAD_RETRY_STEP_MS;
+      console.log(`[photo ${tag}] upload попытка ${attempt + 1}/${UPLOAD_ATTEMPTS} после ошибки: ${uploadError.message || uploadError} (пауза ${delayMs} мс)`);
+      await sleep(delayMs);
     }
     if (uploadError) return { url: null, error: uploadError };
 

@@ -17,7 +17,7 @@
 import { buildInitialDiaries } from '../data/diaries.js';
 import { ok, fail } from './_result.js';
 import { supabase } from './supabase/client.js';
-import { photoUrlForDb, uploadPhoto, TOO_BIG_CODE } from './_photo.js';
+import { photoUrlForDb, uploadPhoto, TOO_BIG_CODE, MAX_PHOTO_BYTES } from './_photo.js';
 import { diaryRowToJs, diaryListRowToJs, diaryReportRowToJs, commentRowToJs } from './supabase/mappers.js';
 import { PG_FOREIGN_KEY_VIOLATION } from './_dbError.js';
 
@@ -98,22 +98,31 @@ async function uploadPhotosLimited(photos, limit = 2) {
   return results;
 }
 
-// Собирает текст warning по неудачным загрузкам (элементы { slot, error }).
+// Лимит на фото в человекочитаемом виде. Берём из _photo.js (MAX_PHOTO_BYTES),
+// чтобы текст в toast'е не расходился с реальным лимитом (раньше тут было
+// зашито «5 МБ», хотя лимит уже 10 МБ).
+const MAX_PHOTO_LABEL = `${Math.round(MAX_PHOTO_BYTES / 1024 / 1024)} МБ`;
+
+// Описывает неудачные загрузки (элементы { slot, error }) списком строк.
 // Для «слишком большого» фото — точное сообщение с номером и размером,
-// для остальных причин — отдельная честная строка (без упоминания 5 МБ).
-function buildPhotoWarning(failed) {
-  const parts = failed.map(({ slot, error }) => {
+// для остальных причин — отдельная честная строка.
+function describePhotoFailures(failed) {
+  return failed.map(({ slot, error }) => {
     if (error && error.code === TOO_BIG_CODE) {
       if (error.sizeBytes) {
-        // Округляем вверх до 0.1 МБ, чтобы 5.04 МБ не превратилось в «5.0 МБ» при лимите 5
+        // Округляем вверх до 0.1 МБ, чтобы 10.04 МБ не превратилось в «10.0 МБ» при лимите 10
         const sizeMb = (Math.ceil((error.sizeBytes / 1024 / 1024) * 10) / 10).toFixed(1);
-        return `Фото ${slot}: ${sizeMb} МБ, пропущено (лимит 5 МБ)`;
+        return `Фото ${slot}: ${sizeMb} МБ, пропущено (лимит ${MAX_PHOTO_LABEL})`;
       }
-      return `Фото ${slot}: пропущено (лимит 5 МБ)`;
+      return `Фото ${slot}: пропущено (лимит ${MAX_PHOTO_LABEL})`;
     }
     return `Фото ${slot}: не удалось загрузить`;
   });
-  return `Отчёт опубликован, но не все фото загружены. ${parts.join('; ')}`;
+}
+
+// Текст warning для insertWeekReport (отчёт уже опубликован, часть фото не дошла).
+function buildPhotoWarning(failed) {
+  return `Отчёт опубликован, но не все фото загружены. ${describePhotoFailures(failed).join('; ')}`;
 }
 
 // Этап 3, Группа C (с правкой после проверки DiaryCard.jsx): сначала
@@ -216,7 +225,7 @@ export async function insertComment({ diaryId, authorId, text }) {
  *
  * coverPhoto: wizard отдаёт base64 data-URL (FileReader.readAsDataURL) —
  * photoUrlForDb (см. _photo.js) грузит его в Supabase Storage и отдаёт
- * короткий публичный URL. Если загрузка не удалась (например, файл >5 МБ),
+ * короткий публичный URL. Если загрузка не удалась (например, файл >10 МБ),
  * cover_photo_url будет null — дневник при этом создаётся. Настоящая
  * http(s)-ссылка проходит как есть.
  *
@@ -315,7 +324,7 @@ export async function insertWeekReport({ diaryId, title, note, temp, hum, photos
 
     let photoRows = [];
     let warning = null;
-    // Часть фото не дошла до Storage (файл >5 МБ, сеть и т.п.) — отчёт всё равно
+    // Часть фото не дошла до Storage (файл >10 МБ, сеть и т.п.) — отчёт всё равно
     // сохраняем, но говорим об этом пользователю (тот же канал warning, что ниже).
     const failed = uploadResults.filter((r) => !r.url);
     if (failed.length > 0) {
@@ -412,6 +421,82 @@ export async function deleteReportPhoto(reportId, url) {
     if (error) return fail(error);
     if (!data || data.length === 0) return fail(new Error('Фото не удалено: не найдено или нет прав'));
     return ok({ reportId, url });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * addReportPhotos(reportId, files) — добавляет новые фото к УЖЕ опубликованному
+ * отчёту.
+ *
+ * files — массив File/Blob (то, что отдаёт <input type="file" multiple>);
+ * пустые элементы отбрасываются.
+ *
+ * Шаги:
+ * 1) Каждый файл идёт через uploadPhoto (HEIC-конвертация, сжатие, ретрай —
+ *    всё в _photo.js), по 2 штуки разом (uploadPhotosLimited, как в
+ *    insertWeekReport).
+ * 2) Узнаём текущий максимум position в diary_photos этого отчёта (SELECT
+ *    делаем ПОСЛЕ загрузки, а не до: загрузка идёт долго, и данные успеют
+ *    устареть). Новые фото получают max+1, max+2, … Если фото в отчёте ещё
+ *    нет — начинаем с 0, как insertWeekReport.
+ * 3) Один batch INSERT в diary_photos.
+ *
+ * Результат:
+ *  - ни одно фото не загрузилось → fail(Error) с причиной (AppContext покажет
+ *    toast), в БД ничего не пишем;
+ *  - загрузилась часть → ok(urls) + поле warning (как у insertWeekReport):
+ *    удачные фото добавлены, в warning — какие пропущены и почему;
+ *  - все загрузились → ok(urls).
+ * Возвращает ok(массив URL) ТОЛЬКО по реально записанным в БД фото, в порядке
+ * выбора файлов — AppContext дописывает их в week.photos.
+ *
+ * Если файлы в Storage загрузились, а INSERT в БД упал — вернётся fail, а файлы
+ * останутся в bucket «сиротами» (безвредно; чистка сирот — отдельная задача,
+ * как и у deleteReportPhoto).
+ */
+export async function addReportPhotos(reportId, files) {
+  try {
+    if (!reportId) return fail(new Error('Не указан отчёт'));
+    const fileList = (Array.isArray(files) ? files : Array.from(files || [])).filter(Boolean);
+    if (fileList.length === 0) return fail(new Error('Не выбраны фото'));
+
+    // 1) загрузка в Storage (по 2 за раз; порядок результатов = порядок файлов)
+    const uploadResults = await uploadPhotosLimited(fileList, 2);
+    const urls = uploadResults.filter((r) => r.url).map((r) => r.url);
+    const failed = uploadResults.filter((r) => !r.url);
+
+    if (urls.length === 0) {
+      return fail(new Error(`Фото не добавлены. ${describePhotoFailures(failed).join('; ')}`));
+    }
+
+    // 2) текущий максимум position в этом отчёте
+    const { data: posRows, error: posError } = await supabase
+      .from('diary_photos')
+      .select('position')
+      .eq('diary_report_id', reportId);
+    if (posError) return fail(posError);
+    const maxPos = (posRows || []).reduce((m, r) => {
+      const p = Number(r.position);
+      return Number.isFinite(p) ? Math.max(m, p) : m;
+    }, -1); // -1: фото ещё нет → первое новое получит position 0
+
+    // 3) batch INSERT: max+1, max+2, …
+    const { data: inserted, error: insertError } = await supabase
+      .from('diary_photos')
+      .insert(urls.map((url, i) => ({ diary_report_id: reportId, url, position: maxPos + 1 + i })))
+      .select('url');
+    if (insertError) return fail(insertError);
+    if (!inserted || inserted.length === 0) {
+      return fail(new Error('Фото не добавлены: нет прав на запись'));
+    }
+
+    const result = ok(urls);
+    if (failed.length > 0) {
+      result.warning = `Добавлено фото: ${urls.length}. Не все загрузились. ${describePhotoFailures(failed).join('; ')}`;
+    }
+    return result;
   } catch (e) {
     return fail(e);
   }
