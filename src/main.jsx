@@ -6,7 +6,7 @@ import { AppProvider } from './context/AppContext.jsx';
 import App from './App.jsx';
 import { loadState } from './services/persistenceService.js';
 import './index.css';
-import { MetrikaCounter } from 'react-metrika';
+import { initMetrika } from './services/metrika.js';
 
 // ---------------------------------------------------------------------------
 // Подмена пререндер-снимка без мигания (Шаг 4.2).
@@ -30,10 +30,6 @@ const tree = (
     <BrowserRouter>
       <AppProvider>
         <App />
-        <MetrikaCounter
-          id={113462451}
-          options={{ trackHash: true, webvisor: true, clickmap: true, accurateTrackBounce: true, trackLinks: true }}
-        />
       </AppProvider>
     </BrowserRouter>
   </React.StrictMode>
@@ -117,6 +113,8 @@ function mountOverSnapshot(snapshotRoot) {
 
   ReactDOM.createRoot(live).render(tree);
 }
+
+initMetrika();
 
 const root = document.getElementById('root');
 let snapshotPath = root.getAttribute('data-prerendered');
