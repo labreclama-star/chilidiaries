@@ -596,6 +596,10 @@ export function AppProvider({ children }) {
     } else {
       showToast('Аккаунт создан! Теперь заведём твой первый дневник.', 'success');
     }
+    // Цель Яндекс.Метрики: успешная регистрация
+    if (typeof window !== 'undefined' && typeof window.ym === 'function') {
+      window.ym(113462451, 'reachGoal', 'registration_success');
+    }
     return g;
   }, [ensureUserGrower, showToast, settings.registrationEnabled, upsertOnlineGrower]);
 
