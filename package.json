@@ -17,6 +17,7 @@
     "heic2any": "^0.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-metrika": "^1.2.0",
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
