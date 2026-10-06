@@ -6,7 +6,8 @@ import { AppProvider } from './context/AppContext.jsx';
 import App from './App.jsx';
 import { loadState } from './services/persistenceService.js';
 import './index.css';
-import { MetrikaCounter } from 'react-metrika';
+import { MetrikaCounter, setMetrikaScriptUrl, METRIKA_SCRIPT_URL_COM } from 'react-metrika';
+setMetrikaScriptUrl(METRIKA_SCRIPT_URL_COM);
 
 // ---------------------------------------------------------------------------
 // Подмена пререндер-снимка без мигания (Шаг 4.2).
