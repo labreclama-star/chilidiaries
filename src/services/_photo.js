@@ -142,11 +142,10 @@ const outputType = () => (canEncodeWebp() ? 'image/webp' : 'image/jpeg');
 
 function getCompressOptions() {
   return {
-    maxSizeMB: TARGET_MB,
-    maxWidthOrHeight: MAX_SIDE,
-    useWebWorker: false,
-    initialQuality: LIB_QUALITY,
-    fileType: outputType(),
+    quality: LIB_QUALITY,
+    maxWidth: MAX_SIDE,
+    maxHeight: MAX_SIDE,
+    mimeType: outputType(),
   };
 }
 
@@ -272,9 +271,9 @@ async function compressBlob(blob, tag, name, realType) {
   try {
     // ВРЕМЕННО: тайминги диагностики (убрать после выяснения причины задержки).
     console.time(`[photo ${tag}] import-lib`);
-    let imageCompression;
+    let Compressor;
     try {
-      ({ default: imageCompression } = await import('browser-image-compression'));
+      ({ default: Compressor } = await import('compressorjs'));
     } finally {
       console.timeEnd(`[photo ${tag}] import-lib`);
     }
@@ -284,10 +283,21 @@ async function compressBlob(blob, tag, name, realType) {
         ? blob
         : new File([blob], 'photo', { type: blob.type });
     const opts = getCompressOptions();
-    console.log(`[photo ${tag}] библиотека: fileType=${opts.fileType}, maxSizeMB=${opts.maxSizeMB}, quality=${opts.initialQuality}, worker=${opts.useWebWorker}`);
+    console.log(`[photo ${tag}] библиотека: mimeType=${opts.mimeType}, quality=${opts.quality}, maxSide=${opts.maxWidth}`);
     console.time(`[photo ${tag}] compress`);
     try {
-      out = await imageCompression(file, opts);
+      out = await new Promise((resolve, reject) => {
+        // eslint-disable-next-line no-new
+        new Compressor(file, {
+          quality: opts.quality,
+          maxWidth: opts.maxWidth,
+          maxHeight: opts.maxHeight,
+          mimeType: opts.mimeType,
+          strict: false,
+          success: resolve,
+          error: reject,
+        });
+      });
     } finally {
       console.timeEnd(`[photo ${tag}] compress`);
     }
